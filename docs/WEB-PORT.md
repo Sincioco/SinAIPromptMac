@@ -142,10 +142,20 @@ the actual application WKWebView, then runs native shell checks. The native
 harness restores every available NSPasteboard item/data type, writes
 `Tests/last-web-results.json`, saves `build/self-test.png`, and exits nonzero if a
 check fails. Failure reports retain previously passing check names and a stack.
-The latest integrated run passed 157 checks: 129 browser/editor checks and 28
+The latest integrated run passed 171 checks: 129 browser/editor checks and 42
 native shell checks. This includes source/visual switching, Save with caret and
 Undo retention, lazy editor isolation, read-only native commands, source-search
 workers, export replacement and asset reuse, untouched HTML preservation,
 external-file conflicts and multi-window recovery. The test uses local
 video fixtures; it does not exercise online playback or request capture access.
 See [the parity audit](PARITY.md) for coverage and remaining manual cases.
+
+
+The active WKWebView spans the full content width. Only its document iframe gets
+`setNavigationInset`, converted from AppKit points by the current page zoom.
+`ribbon-height` keeps native navigation below the measured ribbon, including when
+its rows wrap. `SINWorkspaceSplitView` forwards empty document-pane input to the
+editor; `chrome-overlay` masks popup intersections and yields input to modal
+HTML dialogs. Source view occupies the inset document area. Read-only previews
+cover the editor until Return to document. Native tests cover these layouts,
+resizing, 125% zoom, popover overlap, modal input, and preview restoration.

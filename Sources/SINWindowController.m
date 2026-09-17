@@ -2,9 +2,13 @@
 #import "SINNativeServices.h"
 #import "SINTabButton.h"
 #import "SINAppDelegate.h"
+#import "SINWorkspaceSplitView.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <PDFKit/PDFKit.h>
 static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinShell" code:1 userInfo:@{NSLocalizedDescriptionKey:text}];}
+@interface SINWindowController ()
+@property(nonatomic) BOOL layingOutChrome;
+@end
 @implementation SINWindowController
 - (instancetype)initWithStore:(SINStore *)store restore:(BOOL)restore {
     NSError *error=nil;NSArray *documents=restore?[store restoreDocuments:&error]:@[];
@@ -30,16 +34,18 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
     self.tabScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,784,1280,36)];self.tabScroll.autoresizingMask=NSViewWidthSizable|NSViewMinYMargin;self.tabScroll.hasHorizontalScroller=YES;self.tabScroll.scrollerStyle=NSScrollerStyleOverlay;
     self.tabs=[NSStackView stackViewWithViews:@[]];self.tabs.orientation=NSUserInterfaceLayoutOrientationHorizontal;self.tabs.spacing=4;self.tabs.edgeInsets=NSEdgeInsetsMake(3,8,3,8);self.tabs.frame=NSMakeRect(0,0,1260,34);self.tabScroll.documentView=self.tabs;self.tabScroll.hidden=![self.store.settings[@"showTabs"] boolValue];[content addSubview:self.tabScroll];
     self.status=[NSTextField labelWithString:@"Ready"];self.status.frame=NSMakeRect(10,3,1260,22);self.status.autoresizingMask=NSViewWidthSizable;self.status.font=[NSFont systemFontOfSize:11];self.status.textColor=NSColor.secondaryLabelColor;self.status.lineBreakMode=NSLineBreakByTruncatingMiddle;self.status.hidden=[self.store.settings[@"statusBar"] isEqual:@NO];[content addSubview:self.status];
-    self.split=[[NSSplitView alloc] initWithFrame:NSMakeRect(0,28,1280,756)];self.split.vertical=YES;self.split.dividerStyle=NSSplitViewDividerStyleThin;self.split.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.split.delegate=self;
+    self.editorHost=[[NSView alloc] initWithFrame:NSMakeRect(0,28,1280,756)];self.editorHost.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;[content addSubview:self.editorHost];
+    self.split=[[SINWorkspaceSplitView alloc] initWithFrame:NSMakeRect(0,28,1280,756)];self.split.vertical=YES;self.split.dividerStyle=NSSplitViewDividerStyleThin;self.split.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.split.delegate=self;
     self.navigator=SINNavigator.new;self.navigator.directory=self.store.settings[@"explorerDirectory"]?:@"";self.navigator.sortMode=self.store.settings[@"documentSort"]?:@"manual";
     self.navigator.mode=[self.store.settings[@"navigationMode"] integerValue];self.navigator.showFolders=![self.store.settings[@"explorerShowFolders"] isEqual:@NO];
     self.navigator.view.frame=NSMakeRect(0,0,250,756);[self.split addSubview:self.navigator.view];
-    self.editorHost=[[NSView alloc] initWithFrame:NSMakeRect(251,0,1029,756)];[self.split addSubview:self.editorHost];[self.split setPosition:MAX(180,[self.store.settings[@"listWidth"] doubleValue]) ofDividerAtIndex:0];self.navigator.view.hidden=[self.store.settings[@"navigationVisible"] isEqual:@NO];[content addSubview:self.split];[self layoutChrome];
+    self.documentPane=[[NSView alloc] initWithFrame:NSMakeRect(251,0,1029,756)];((SINWorkspaceSplitView *)self.split).documentPane=self.documentPane;[self.split addSubview:self.documentPane];[self.split setPosition:MAX(180,[self.store.settings[@"listWidth"] doubleValue]) ofDividerAtIndex:0];self.navigator.view.hidden=[self.store.settings[@"navigationVisible"] isEqual:@NO];[content addSubview:self.split];[self layoutChrome];
     __weak typeof(self) weakSelf=self;
     self.navigator.selected=^(id item){if([item isKindOfClass:SINDocument.class])[weakSelf activate:item];else if([item isKindOfClass:NSDictionary.class])[weakSelf.editor evaluate:[NSString stringWithFormat:@"window.editor.outline.jump(%@)",item[@"index"]] completion:nil];else [weakSelf openPaths:@[item]];};
     self.navigator.action=^(NSString *action,id item){[weakSelf navigateAction:action item:item];};
     self.navigator.reordered=^(NSArray *documents){weakSelf.documents=documents.mutableCopy;[weakSelf refresh];[weakSelf persist];};
 }
+- (void)setPreview:(NSView *)preview { _preview=preview;[self layoutChrome]; }
 - (SINEditor *)editor {return self.editors[self.active.identifier];}
 - (SINEditor *)editorFor:(SINDocument *)document {
     SINEditor *editor=self.editors[document.identifier];if(editor)return editor;
@@ -48,7 +54,8 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
     editor.changed=^{if(weakEditor.document.modified)weakEditor.document.modifiedDate=NSDate.date;[weakSelf refresh];};editor.command=^(NSString *command){[weakSelf handleCommand:command];};
     editor.annotationMode=^(BOOL open){[weakSelf setAnnotationMode:open editor:weakEditor];};
     editor.nativeMessage=^(NSDictionary *body,void(^reply)(id,NSError*)){[weakSelf receiveMessage:body editor:weakEditor reply:reply];};
-    editor.readyHandler=^{[weakEditor applyPreferences];};return editor;
+    editor.chromeChanged=^{if(weakSelf.editor==weakEditor)[weakSelf layoutChrome];};
+    editor.readyHandler=^{[weakEditor applyPreferences];[weakSelf layoutChrome];};return editor;
 }
 - (void)activate:(SINDocument *)document {
     if(!document||self.annotating)return;
@@ -57,7 +64,7 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
         SINEditor *old=self.editor;if(old&&old.document!=document)[old evaluate:@"window.editor.stopMedia()" completion:nil];
         [old.view removeFromSuperview];self.active=document;
         SINEditor *editor=[self editorFor:document];editor.view.frame=self.editorHost.bounds;editor.view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;[self.editorHost addSubview:editor.view];
-        editor.services.window=self.window;[self refresh];[editor focusEditor];[self persist];
+        editor.services.window=self.window;[self layoutChrome];[self refresh];[editor focusEditor];[self persist];
     };
     if(self.editor)[self.editor flush:show];else show();
 }
@@ -117,9 +124,9 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
     }
 }
 - (void)setAnnotationMode:(BOOL)open editor:(SINEditor *)editor {
-    self.annotating=open;
-    if(open){[editor.view removeFromSuperview];editor.view.frame=self.window.contentView.bounds;[self.window.contentView addSubview:editor.view];}
-    else {[editor.view removeFromSuperview];editor.view.frame=self.editorHost.bounds;[self.editorHost addSubview:editor.view];[self refresh];}
+    self.annotating=open;self.split.hidden=open;
+    if(open){[editor.view removeFromSuperview];editor.view.frame=self.window.contentView.bounds;[self.window.contentView addSubview:editor.view];[editor setNavigationWidth:0];}
+    else {[editor.view removeFromSuperview];editor.view.frame=self.editorHost.bounds;[self.editorHost addSubview:editor.view];[self layoutChrome];[self refresh];}
 }
 - (void)receiveMessage:(NSDictionary *)body editor:(SINEditor *)editor reply:(void(^)(id,NSError*))reply {
     NSString *type=body[@"type"];
@@ -161,7 +168,7 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
     else if([@[@"zoomIn",@"zoomOut",@"zoomReset"] containsObject:command]){self.active.zoom=[command isEqual:@"zoomReset"]?100:MAX(25,MIN(400,self.active.zoom+([command isEqual:@"zoomIn"]?10:-10)));[self.editor applyPreferences];[self refresh];}
     else if([@[@"next",@"previous"] containsObject:command]){NSUInteger index=[self.documents indexOfObject:self.active];if(self.documents.count)[self activate:self.documents[(index+self.documents.count+([command isEqual:@"next"]?1:-1))%self.documents.count]];}
     else if([command isEqual:@"documentList"]){self.navigator.view.hidden=!self.navigator.view.hidden;self.tabScroll.hidden=!self.navigator.view.hidden;self.store.settings[@"navigationVisible"]=@(!self.navigator.view.hidden);self.store.settings[@"showTabs"]=@(!self.tabScroll.hidden);[self.split adjustSubviews];[self layoutChrome];[self persist];}
-    else if([command isEqual:@"contentView"]){self.navigator.mode=2;self.navigator.view.hidden=NO;[self.split adjustSubviews];[self.editor evaluate:@"window.editor.outline.items()" completion:^(id items,NSError *e){self.navigator.headings=[items isKindOfClass:NSArray.class]?items:@[];[self.navigator refresh];}];}
+    else if([command isEqual:@"contentView"]){self.navigator.mode=2;self.navigator.view.hidden=NO;[self.split adjustSubviews];[self layoutChrome];[self.editor evaluate:@"window.editor.outline.items()" completion:^(id items,NSError *e){self.navigator.headings=[items isKindOfClass:NSArray.class]?items:@[];[self.navigator refresh];}];}
     else if([command isEqual:@"settings"])[self showSettings];
     else if([command isEqual:@"scanUnused"])[self scanUnusedImages];
     else if([command isEqual:@"rename"])[self renameDocument:self.active];
@@ -195,15 +202,30 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
     else if([command isEqual:@"newline"]){self.active.newline=[self.active.newline isEqual:@"\n"]?@"\r\n":@"\n";[self refresh];}
     else [self navigateAction:command item:self.active];
 }
-- (void)layoutChrome {NSRect bounds=self.window.contentView.bounds;CGFloat top=self.tabScroll.hidden?0:36,bottom=self.status.hidden?0:28;self.split.frame=NSMakeRect(0,bottom,bounds.size.width,bounds.size.height-top-bottom);}
+- (void)layoutChrome {
+    if(self.layingOutChrome || !self.split)return;self.layingOutChrome=YES;
+    NSRect bounds=self.window.contentView.bounds;CGFloat top=self.tabScroll.hidden?0:36,bottom=self.status.hidden?0:28;
+    self.editorHost.frame=NSMakeRect(0,bottom,bounds.size.width,MAX(0,bounds.size.height-top-bottom));
+    SINEditor *editor=self.editor;editor.view.hidden=self.preview!=nil && !self.annotating;
+    CGFloat ribbon=self.preview?0:MIN(editor.ribbonHeight,self.editorHost.bounds.size.height);
+    self.split.frame=NSMakeRect(0,bottom,bounds.size.width,MAX(0,self.editorHost.bounds.size.height-ribbon));
+    CGFloat inset=self.navigator.view.hidden?0:NSMaxX(self.navigator.view.frame)+self.split.dividerThickness;
+    [editor setNavigationWidth:self.annotating?0:inset];
+    self.split.hidden=self.annotating || (!self.preview && !editor.showingSource && editor.modalOverlay);
+    NSMutableArray *holes=NSMutableArray.new;
+    if(!self.preview && !editor.showingSource)for(NSValue *value in editor.overlayRects)[holes addObject:[NSValue valueWithRect:[self.split convertRect:value.rectValue fromView:editor.webView]]];
+    ((SINWorkspaceSplitView *)self.split).excludedRects=holes;
+    self.layingOutChrome=NO;
+}
 - (void)saveAllAtIndex:(NSUInteger)index {if(index>=self.documents.count)return;[self saveDocument:self.documents[index] saveAs:NO completion:^(BOOL saved){if(saved)[self saveAllAtIndex:index+1];}];}
 - (void)goToLine {NSAlert *alert=NSAlert.new;alert.messageText=@"Go to line";NSTextField *field=[[NSTextField alloc] initWithFrame:NSMakeRect(0,0,220,26)];field.stringValue=@"1";alert.accessoryView=field;[alert addButtonWithTitle:@"Go"];[alert addButtonWithTitle:@"Cancel"];[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse r){if(r!=NSAlertFirstButtonReturn)return;[self.editor showSource:YES completion:^{NSUInteger target=MAX(1,field.integerValue),line=1,index=0;NSString *text=self.editor.sourceView.string;while(index<text.length&&line<target){if([text characterAtIndex:index++]=='\n')line++;}self.editor.sourceView.selectedRange=NSMakeRange(index,0);[self.editor.sourceView scrollRangeToVisible:NSMakeRange(index,0)];}];}];}
 - (void)chooseEncoding {NSAlert *alert=NSAlert.new;alert.messageText=@"Document encoding";NSPopUpButton *popup=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,240,28)];[popup addItemsWithTitles:SINDocument.encodingNames];[popup selectItemWithTitle:self.active.encodingName];alert.accessoryView=popup;[alert addButtonWithTitle:@"Apply"];[alert addButtonWithTitle:@"Cancel"];[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse r){if(r==NSAlertFirstButtonReturn){self.active.encodingName=popup.titleOfSelectedItem;[self refresh];}}];}
 - (BOOL)splitView:(NSSplitView *)split canCollapseSubview:(NSView *)view{return view==self.navigator.view;}
+- (BOOL)splitView:(NSSplitView *)split shouldAdjustSizeOfSubview:(NSView *)view{return view==self.documentPane;}
 - (CGFloat)splitView:(NSSplitView *)split constrainMinCoordinate:(CGFloat)value ofSubviewAt:(NSInteger)index{return 180;}
 - (CGFloat)splitView:(NSSplitView *)split constrainMaxCoordinate:(CGFloat)value ofSubviewAt:(NSInteger)index{return split.bounds.size.width-400;}
 - (void)windowDidBecomeKey:(NSNotification *)note {[self checkExternalChange];}
-- (void)splitViewDidResizeSubviews:(NSNotification *)note {if(!self.navigator.view.hidden)self.store.settings[@"listWidth"]=@(self.navigator.view.frame.size.width);}
+- (void)splitViewDidResizeSubviews:(NSNotification *)note {if(!self.navigator.view.hidden)self.store.settings[@"listWidth"]=@(self.navigator.view.frame.size.width);[self layoutChrome];}
 - (void)windowDidResize:(NSNotification *)note {[self layoutChrome];}
 - (BOOL)windowShouldClose:(NSWindow *)window {
     if(self.closing)return YES;

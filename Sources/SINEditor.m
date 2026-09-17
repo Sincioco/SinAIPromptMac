@@ -38,6 +38,11 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
 @property(nonatomic) BOOL ready;
 @property(nonatomic) BOOL showingSource;
 @property(nonatomic) BOOL receiving;
+@property(nonatomic) CGFloat measuredRibbonHeight;
+@property(nonatomic) CGFloat navigationWidth;
+@property(nonatomic) CGFloat appliedNavigationInset;
+@property(nonatomic) BOOL modalOverlay;
+@property(nonatomic,copy) NSArray<NSDictionary *> *popupRects;
 @property(nonatomic,copy) NSString *baselineHTML;
 @property(nonatomic,copy) NSString *loadedRaw;
 @property(nonatomic) BOOL invalidated;
@@ -47,7 +52,7 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
 @implementation SINEditor
 - (instancetype)initWithDocument:(SINDocument *)document dataDirectory:(NSString *)directory {
     if ((self=[super initWithNibName:nil bundle:nil])) {
-        _document=document; _pending=NSMutableDictionary.new; _whenReady=NSMutableArray.new;
+        _appliedNavigationInset=-1; _document=document; _pending=NSMutableDictionary.new; _whenReady=NSMutableArray.new;
         _services=[[SINNativeServices alloc] initWithDataDirectory:directory];
         _services.documentID=document.identifier;
     } return self;
@@ -89,6 +94,21 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
     self.visualButton.bordered=NO; self.visualButton.hidden=YES; [self.view addSubview:self.visualButton];
     [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"sin-asset://app/index.html"]]];
 }
+- (CGFloat)ribbonHeight { return self.showingSource || [self.preferences[@"showToolbar"] isEqual:@NO] ? 0 : self.measuredRibbonHeight*self.webView.pageZoom; }
+- (NSArray<NSValue *> *)overlayRects {
+    NSMutableArray *rects=NSMutableArray.new;CGFloat scale=self.webView.pageZoom;
+    for(NSDictionary *rect in self.popupRects){CGFloat x=[rect[@"x"] doubleValue]*scale,y=[rect[@"y"] doubleValue]*scale,w=[rect[@"width"] doubleValue]*scale,h=[rect[@"height"] doubleValue]*scale;
+        [rects addObject:[NSValue valueWithRect:NSMakeRect(x,self.webView.isFlipped?y:self.webView.bounds.size.height-y-h,w,h)]];}
+    return rects;
+}
+- (void)setNavigationWidth:(CGFloat)width {
+    _navigationWidth=MAX(0,width);NSRect bounds=self.view.bounds;
+    self.sourceScroll.frame=NSMakeRect(_navigationWidth,0,MAX(0,bounds.size.width-_navigationWidth),MAX(0,bounds.size.height-36));
+    self.visualButton.frame=NSMakeRect(_navigationWidth+10,MAX(0,bounds.size.height-32),300,28);
+    CGFloat inset=_navigationWidth/MAX(.1,self.webView.pageZoom);
+    if(self.ready && fabs(inset-self.appliedNavigationInset)>.01){self.appliedNavigationInset=inset;[self evaluate:[NSString stringWithFormat:@"window.editor.setNavigationInset(%.4f);void 0",inset] completion:nil];}
+}
+- (void)viewDidLayout { [super viewDidLayout]; [self setNavigationWidth:self.navigationWidth]; }
 - (void)sourceScrolled:(NSNotification *)note { [self.sourceScroll.verticalRulerView setNeedsDisplay:YES]; }
 - (void)backToVisual:(id)sender { [self showSource:NO completion:nil]; }
 - (void)syncServices { self.services.documentPath=self.document.path; self.services.documentID=self.document.identifier; self.services.window=self.view.window; }
@@ -122,7 +142,7 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
         self.showingSource=source; self.sourceScroll.hidden=!source; self.visualButton.hidden=!source; self.webView.hidden=source;
         if(source){self.receiving=YES;self.sourceView.string=self.document.text;self.receiving=NO;[self evaluate:@"window.editor.stopMedia()" completion:nil];}
         else [self reload];
-        [self focusEditor];if(completion)completion();
+        if(self.chromeChanged)self.chromeChanged();[self focusEditor];if(completion)completion();
     }];
 }
 - (void)applyPreferences {
@@ -136,6 +156,7 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
     self.sourceView.textContainer.containerSize=NSMakeSize(wrap?MAX(100,self.sourceScroll.contentSize.width):CGFLOAT_MAX,CGFLOAT_MAX);
     self.sourceView.font=[NSFont monospacedSystemFontOfSize:13*self.document.zoom/100.0 weight:NSFontWeightRegular];
     self.webView.pageZoom=self.document.zoom/100.0;
+    [self setNavigationWidth:self.navigationWidth];if(self.chromeChanged)self.chromeChanged();
     if(!self.ready)return;
     [self evaluate:[NSString stringWithFormat:@"document.documentElement.dataset.theme=%@;document.querySelector('#toolbar').hidden=%@;window.editor.setToolbarWrap(%@);window.editor.setImageStorage(%@);window.editor.setReadOnly(%@)",SINJSON([p[@"theme"] lowercaseString]?:@"system"),[p[@"showToolbar"] isEqual:@NO]?@"true":@"false",[p[@"wrapToolbar"] isEqual:@NO]?@"false":@"true",SINJSON(p[@"imageStorage"]?:@""),self.document.readOnly?@"true":@"false"] completion:nil];
 }
@@ -183,7 +204,9 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
     if([type isEqual:@"command"]){if(body[@"html"]&&!self.document.readOnly)self.document.text=[body[@"html"] isEqual:self.baselineHTML]?self.loadedRaw:body[@"html"];if(self.command)self.command(body[@"command"]);return;}
     if([type isEqual:@"source"]){[self showSource:YES completion:nil];return;}
     if([type isEqual:@"annotation-mode"]){if(self.annotationMode)self.annotationMode([body[@"open"] boolValue]);reply(nil,nil);return;}
-    if([@[@"image-status",@"ribbon-height",@"chrome-overlay",@"painted"] containsObject:type]){reply(nil,nil);return;}
+    if([type isEqual:@"ribbon-height"]){self.measuredRibbonHeight=MAX(0,[body[@"height"] doubleValue]);if(self.chromeChanged)self.chromeChanged();reply(nil,nil);return;}
+    if([type isEqual:@"chrome-overlay"]){self.modalOverlay=[body[@"modal"] boolValue];self.popupRects=[body[@"rects"] isKindOfClass:NSArray.class]?body[@"rects"]:@[];if(self.chromeChanged)self.chromeChanged();reply(nil,nil);return;}
+    if([@[@"image-status",@"painted"] containsObject:type]){reply(nil,nil);return;}
     [self syncServices];
     // File-changing requests are mediated by the document shell before native services.
     if(self.nativeMessage) self.nativeMessage(body,reply);

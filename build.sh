@@ -3,7 +3,7 @@ set -euo pipefail
 cd "${0:A:h}"
 APP="$PWD/build/Sin AI Prompt.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-nullability-completeness -Wno-deprecated-declarations -mmacosx-version-min=13.3 -ISources Sources/*.m -framework Cocoa -framework WebKit -framework PDFKit -framework UniformTypeIdentifiers -framework ImageIO -framework CoreGraphics -o "$APP/Contents/MacOS/SinAIPrompt"
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-nullability-completeness -Wno-deprecated-declarations -mmacosx-version-min=13.3 -ISources Sources/*.m -framework Cocoa -framework WebKit -framework PDFKit -framework UniformTypeIdentifiers -framework ImageIO -framework CoreGraphics -framework QuartzCore -o "$APP/Contents/MacOS/SinAIPrompt"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp -R Resources/Web "$APP/Contents/Resources/"
 cp Resources/AppIcon.png "$APP/Contents/Resources/"

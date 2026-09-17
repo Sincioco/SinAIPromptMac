@@ -28,7 +28,7 @@ static NSError *FileActionError(NSString *message) { return [NSError errorWithDo
         NSSavePanel *panel = NSSavePanel.savePanel;
         panel.allowedContentTypes = @[UTTypeHTML]; panel.canCreateDirectories = YES;
         panel.title = saveAs ? @"Save HTML As" : @"Save HTML";
-        panel.nameFieldStringValue = document.path ? document.path.lastPathComponent : [document.name stringByAppendingPathExtension:@"html"];
+        panel.nameFieldStringValue = document.path || document.name.pathExtension.length ? document.name : [document.name stringByAppendingPathExtension:@"html"];
         if (document.path) panel.directoryURL = [NSURL fileURLWithPath:document.path.stringByDeletingLastPathComponent isDirectory:YES];
         [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
             if (response != NSModalResponseOK) { self.saving = NO; if (completion) completion(NO); return; }

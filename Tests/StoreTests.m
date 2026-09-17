@@ -11,6 +11,14 @@ static void Check(BOOL value, NSString *message) {
 static void Put(NSString *text, NSString *path) {
     Check([text writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:NULL], @"write fixture");
 }
+static NSString *ExpectedDraftName(SINDocument *document) {
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    formatter.timeZone = NSTimeZone.localTimeZone;
+    formatter.dateFormat = @"yyyy-MM-dd HHmm";
+    return [NSString stringWithFormat:@"%@ - Prompt %ld", [formatter stringFromDate:document.createdDate], (long)document.untitledNumber];
+}
 int main(void) {
     @autoreleasepool {
         NSString *root = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"SinAIPrompt-tests-" stringByAppendingString:NSUUID.UUID.UUIDString]];
@@ -21,8 +29,12 @@ int main(void) {
         SINStore *store = [[SINStore alloc] initWithDirectory:[root stringByAppendingPathComponent:@"profile"] error:&error];
         Check(store != nil, error.localizedDescription ?: @"create profile");
         SINDocument *one = [store newDocument:&error], *two = [store newDocument:&error];
-        Check([one.name isEqual:@"Prompt 1"] && [two.name isEqual:@"Prompt 2"], @"sequential prompt names");
+        Check(one.untitledNumber == 1 && two.untitledNumber == 2 && [one.name hasSuffix:@" - Prompt 1"] && [two.name hasSuffix:@" - Prompt 2"], @"sequential prompt names include the Windows naming suffix");
+        Check([one.name isEqual:ExpectedDraftName(one)] && [two.name isEqual:ExpectedDraftName(two)], @"new manual drafts include their creation date and local 24-hour minute");
+        NSRegularExpression *draftPattern = [NSRegularExpression regularExpressionWithPattern:@"^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{4} - Prompt [0-9]+$" options:0 error:NULL];
+        Check([draftPattern numberOfMatchesInString:one.name options:0 range:NSMakeRange(0,one.name.length)] == 1 && !one.path && !two.path, @"manual draft names use the exact invariant Windows format without creating files");
         Check(!one.modified, @"new draft starts clean");
+        NSString *originalDraftName = one.name;
         one.text = @"<!doctype html><html><body><p>Unsaved 😀</p></body></html>";
         Check(one.modified, @"dirty state");
         store.settings[@"wordWrap"] = @NO;
@@ -31,10 +43,23 @@ int main(void) {
         SINStore *restoredStore = [[SINStore alloc] initWithDirectory:store.directory error:&error];
         NSArray *restored = [restoredStore restoreDocuments:&error];
         Check(restored.count == 2 && [[restored[0] text] isEqual:one.text] && [restored[0] modified], @"recover unsaved text");
+        Check([[restored[0] name] isEqual:originalDraftName] && [[restored[0] draftName] isEqual:originalDraftName], @"session recovery preserves the creation-time draft name and pending edits");
+        SINDocument *historic = [SINDocument documentFromDictionary:@{@"untitledNumber":@42, @"draftName":@"2020-01-02 0304 - Prompt 42", @"createdDate":@0}];
+        Check([historic.name isEqual:@"2020-01-02 0304 - Prompt 42"], @"recovered names are not regenerated from the current date or stored timestamp");
+        Check([[SINDocument documentFromDictionary:@{@"untitledNumber":@42}].name isEqual:@"Prompt 42"], @"legacy recovery without a draft name retains its original Prompt N name");
+        Check([historic renameToFilename:@"My renamed draft.html" error:&error] && [historic.name isEqual:@"My renamed draft.html"] && !historic.path, @"renaming a draft preserves the chosen name without saving a file");
+        Check([[SINDocument documentFromDictionary:historic.dictionaryRepresentation].name isEqual:historic.name], @"custom draft names survive recovery unchanged");
         Check([restoredStore.activeIdentifier isEqual:one.identifier], @"restore active document");
         Check(![restoredStore.settings[@"wordWrap"] boolValue] && restoredStore.templates.count == 1, @"settings and template roundtrip");
+        restoredStore.settings[@"nextDocumentNumber"] = @1;
+        [restoredStore restoreDocuments:&error];
+        SINDocument *continued = [restoredStore newDocument:&error];
+        Check(continued.untitledNumber == 3 && [continued.name hasSuffix:@" - Prompt 3"], @"recovery raises stale numbering before creating the next timestamped draft");
+        SINStore *reopenedNumbering = [[SINStore alloc] initWithDirectory:store.directory error:&error];
+        Check([reopenedNumbering.settings[@"nextDocumentNumber"] integerValue] == 4, @"new document sequence persists across profile restarts");
         NSString *path = [root stringByAppendingPathComponent:@"original.html"];
         Check([one saveToPath:path overwriteConflict:NO error:&error] && !one.modified, @"save new document");
+        Check(!one.draftName && [one.name isEqual:@"original.html"], @"first save replaces the timestamp draft name with the chosen filename");
         one.text = [one.text stringByAppendingString:@"\n<p>More</p>"];
         Put(@"external", path);
         Check(![one saveToPath:path overwriteConflict:NO error:&error] && error.code == SINErrorConflict, @"reject external modification");
@@ -144,6 +169,7 @@ int main(void) {
         store.settings[@"autoSaveDirectory"] = [root stringByAppendingPathComponent:@"autosave"];
         SINDocument *autoOne = [store newDocument:&error];
         Check(autoOne.autosave && [fm fileExistsAtPath:autoOne.path], @"autosave reserves and writes document");
+        Check([autoOne.name isEqual:[ExpectedDraftName(autoOne) stringByAppendingPathExtension:@"html"]] && !autoOne.draftName, @"autosave uses one creation timestamp prefix and one HTML extension");
         store.settings[@"nextDocumentNumber"] = @(autoOne.untitledNumber);
         SINDocument *autoTwo = [store newDocument:&error];
         Check(autoTwo.untitledNumber > autoOne.untitledNumber && ![autoOne.path isEqual:autoTwo.path], @"autosave numbering collision cannot overwrite");

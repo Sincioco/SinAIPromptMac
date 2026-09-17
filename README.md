@@ -35,7 +35,7 @@ For an independent portable profile:
 
 - New, open, save, Save As, Save All, duplicate, rename, close, recent documents,
   multiple windows, draggable document tabs and a resizable navigation pane.
-- Original formatting ribbon: fonts, sizes, foreground/highlight palettes with
+- Full-width formatting ribbon above the navigation pane: fonts, sizes, foreground/highlight palettes with
   shared recent colors, formatting painter, paragraph styles, headings, lists,
   alignment, links, code blocks and image tools.
 - Code blocks retain the original language lexers, full/preview/collapsed modes,
@@ -49,6 +49,11 @@ For an independent portable profile:
   document contents navigation, date/time formats and separators.
 - HTML head content and original scripts are preserved when saving. Document
   scripts stay blocked in the editor; trusted editing code is separate.
+
+New documents use the Windows naming format `yyyy-MM-dd HHmm - Prompt N`, using
+their creation time in the Mac's local time zone. Save and auto-save add `.html`.
+Recovery retains the original draft name, including older `Prompt N` names and
+names you choose yourself.
 
 ## Images and capture
 
@@ -118,7 +123,7 @@ folder for autosaving new documents, startup restoration and save-on-close.
 This builds the app, runs native persistence, service and unused-image scanner
 checks, parses the JavaScript with Apple's installed JavaScriptCore, then runs
 editor and native shell checks in the real WKWebView using an isolated temporary
-profile. The latest integrated run passed 157 checks; the
+profile. The latest integrated run passed 171 checks; the
 [parity audit](docs/PARITY.md) records each suite's evidence and remaining manual
 cases. Clipboard tests restore the prior pasteboard. No screen-recording
 permission is requested by automated tests. Generated results and screenshots

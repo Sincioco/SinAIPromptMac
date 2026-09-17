@@ -21,12 +21,13 @@ A passing check covers its stated case, not every interaction in a row.
 
 | Original feature | Mac implementation / equivalent | Evidence |
 | --- | --- | --- |
-| New/open/save HTML, sequential Prompt N names, modified marker | AppKit commands and SINDocument/SINStore | Model; App integration for Save and source caret/Undo; UI smoke for native Open panel and edit/save/Undo. Manual: remaining save-panel paths |
+| New/open/save HTML, timestamped `yyyy-MM-dd HHmm - Prompt N` names, modified marker | AppKit commands and SINDocument/SINStore; creation-time draft names retained in recovery | Model for local creation timestamp, sequential and recovered numbering, legacy/custom draft names, and collision-safe autosave filenames; App integration for Save and source caret/Undo; UI smoke for native Open panel and edit/save/Undo. Manual: remaining save-panel paths |
 | Save As preserves original, copies matching image assets, rebases references | Transactional native model copy and local URL rebase | Model for file/asset copy, rebase, confirmed replacement, compatible asset merging and preserved unknown files. Manual: Save As panel interactions |
 | HTML head and script source retained; editor does not execute document scripts | Existing serialization plus WebKit sandbox and first CSP policy | App integration for source roundtrip, scripts/events/JavaScript links/nested frames blocked, refresh disabled, later CSP unable to loosen policy |
 | Source / visual editor switching | NSTextView and WKWebView | App integration for source edits, Save caret/Undo, and return to visual; UI smoke for fresh-document switching retaining its unmodified state |
 | Rich text fonts, sizes, text colors, highlighting, bold/italic/underline/strike | Existing browser ribbon and contenteditable editor | App integration for font service, sizes, palette, highlighting and selection retention. Manual: font/emphasis combinations and formatting painter |
 | Headings, styles, alignment, lists, nested numbering, links | Existing document styles and editor modules | App integration for styles, continue/restart/custom numbering, Undo, nested Markdown lists and link unlinking. Manual: alignment and complex list gestures |
+| Full-width ribbon above navigation | Full-width WKWebView, inset document and measured native navigation layout | App integration for divider/window resizing, source switching, zoom, popover overlap and modal input; UI smoke for the full-width ribbon |
 | Modern paragraph styles; split color buttons; recent shared colors | Bundled editor with native profile persistence | App integration for all five styles, 70-color palette and ribbon overflow; Services for recent-color cap/deduplication. Manual: shared history across picker UI |
 | Paste Code: eight languages, full/preview/collapsed modes, lexical coloring | Original modules with WebKit structured-block insertion adapter | App integration for all eight lexers, exact source, captions, disclosure, modes, insertion/edit/save/Markdown and native Undo/Redo |
 | URL cards, YouTube inline playback/fullscreen/browser link, optional local thumbnail | Browser cards plus native URL metadata / image services | App integration for card/inline/embed conversion, insertion, metadata preservation and Undo/Redo; Services for YouTube URL parsing. Manual: online metadata, playback, fullscreen and saved thumbnail |
@@ -75,9 +76,9 @@ Run all local checks with the installed compiler and Apple frameworks:
 ./test.sh
 ```
 
-The latest validation passed 96 persistence assertions, 133 native service checks,
+The latest validation passed 107 persistence assertions, 133 native service checks,
 62 unused-image scanner checks, and syntax parsing of 51 JavaScript modules.
-The integrated app run passed 157 checks (129 browser/editor checks and 28 native
+The integrated app run passed 171 checks (129 browser/editor checks and 42 native
 shell checks); its result is recorded in `Tests/last-web-results.json` with a
 snapshot at `build/self-test.png`. Counts include fixture and request assertions;
 they are not counts of distinct features. **Manual** cases above remain outside

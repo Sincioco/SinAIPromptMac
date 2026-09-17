@@ -53,14 +53,19 @@ static BOOL WriteJSON(id value, NSString *path, NSError **error) {
     NSString *autosaveFolder = self.settings[@"autoSaveDirectory"];
     if (![autosaveFolder isKindOfClass:NSString.class]) autosaveFolder = @"";
     if (autosaveFolder.length && ![NSFileManager.defaultManager createDirectoryAtPath:autosaveFolder.stringByExpandingTildeInPath withIntermediateDirectories:YES attributes:nil error:error]) return nil;
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+    formatter.timeZone = NSTimeZone.localTimeZone;
+    formatter.dateFormat = @"yyyy-MM-dd HHmm";
     while (YES) {
         SINDocument *document = [SINDocument new];
         document.untitledNumber = number++;
+        document.draftName = [NSString stringWithFormat:@"%@ - Prompt %ld", [formatter stringFromDate:document.createdDate], (long)document.untitledNumber];
         document.text = @"<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"></head><body><p><br></p></body></html>";
         document.savedText = document.text;
         if (autosaveFolder.length) {
-            NSDateFormatter *formatter = [NSDateFormatter new]; formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]; formatter.dateFormat = @"yyyy-MM-dd HHmm";
-            NSString *filename = [NSString stringWithFormat:@"%@ - %@.html", [formatter stringFromDate:NSDate.date], document.name];
+            NSString *filename = [document.name stringByAppendingPathExtension:@"html"];
             NSString *path = [autosaveFolder.stringByExpandingTildeInPath stringByAppendingPathComponent:filename];
             NSError *saveError = nil;
             if (![document saveToPath:path overwriteConflict:NO error:&saveError]) {

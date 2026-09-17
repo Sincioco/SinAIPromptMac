@@ -12,6 +12,7 @@
 @property(nonatomic,strong) SINNavigator *navigator;
 @property(nonatomic,strong) NSSplitView *split;
 @property(nonatomic,strong) NSView *editorHost;
+@property(nonatomic,strong) NSView *documentPane;
 @property(nonatomic,strong) NSScrollView *tabScroll;
 @property(nonatomic,strong) NSStackView *tabs;
 @property(nonatomic,strong) NSTextField *status;
@@ -30,6 +31,7 @@
 - (void)activate:(SINDocument *)document;
 - (void)showError:(NSError *)error;
 - (void)refresh;
+- (void)layoutChrome;
 - (void)persist;
 @end
 

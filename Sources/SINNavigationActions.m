@@ -39,7 +39,7 @@
 - (void)showPreview:(NSString *)path {
     if(self.annotating)return;
     [self.editor flush:^{
-        [self.preview removeFromSuperview];SINPreviewContainer *container=[[SINPreviewContainer alloc] initWithFrame:self.editorHost.bounds];container.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.preview=container;
+        [self.preview removeFromSuperview];SINPreviewContainer *container=[[SINPreviewContainer alloc] initWithFrame:self.documentPane.bounds];container.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.preview=container;container.frame=self.documentPane.bounds;
         NSButton *back=[NSButton buttonWithTitle:@"← Return to document" target:self action:@selector(returnFromPreview:)];back.frame=NSMakeRect(12,container.bounds.size.height-38,190,28);back.autoresizingMask=NSViewMinYMargin;[container addSubview:back];
         NSTextField *label=[NSTextField labelWithString:path.lastPathComponent];label.frame=NSMakeRect(220,container.bounds.size.height-34,MAX(100,container.bounds.size.width-230),24);label.autoresizingMask=NSViewWidthSizable|NSViewMinYMargin;[container addSubview:label];
         NSRect frame=NSMakeRect(0,0,container.bounds.size.width,container.bounds.size.height-44);NSString *extension=path.pathExtension.lowercaseString;
@@ -53,7 +53,7 @@
                 preview.readyHandler=^{[weakPreview asyncScript:[NSString stringWithFormat:@"const markdown=await import('./markdown.js'); await window.editor.load(markdown.markdownToHtml(%@,'sin-asset://document/'),'sin-asset://document/');window.editor.setReadOnly(true);document.querySelector('#toolbar').hidden=true;return true;",SINJSON(text)] completion:^(id result,NSError *e){if(e)[self showError:e];}];};
             }else {NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:frame];scroll.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;scroll.hasVerticalScroller=YES;NSTextView *view=[[NSTextView alloc] initWithFrame:scroll.bounds];view.editable=NO;view.richText=NO;view.string=text;view.font=[NSFont monospacedSystemFontOfSize:13 weight:NSFontWeightRegular];view.autoresizingMask=NSViewWidthSizable;view.textContainerInset=NSMakeSize(14,14);scroll.documentView=view;[container addSubview:scroll];}
         }
-        [self.editor evaluate:@"window.editor.stopMedia()" completion:nil];[self.editorHost addSubview:container];self.status.stringValue=[@"Read-only preview    ·    " stringByAppendingString:path];
+        [self.editor evaluate:@"window.editor.stopMedia()" completion:nil];[self.documentPane addSubview:container];self.status.stringValue=[@"Read-only preview    ·    " stringByAppendingString:path];
     }];
 }
 - (void)returnFromPreview:(id)sender {[self.preview removeFromSuperview];self.preview=nil;[self refresh];[self.editor focusEditor];}
