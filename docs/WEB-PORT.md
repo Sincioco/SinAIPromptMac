@@ -142,11 +142,13 @@ the actual application WKWebView, then runs native shell checks. The native
 harness restores every available NSPasteboard item/data type, writes
 `Tests/last-web-results.json`, saves `build/self-test.png`, and exits nonzero if a
 check fails. Failure reports retain previously passing check names and a stack.
-The latest integrated run passed 171 checks: 129 browser/editor checks and 42
+The latest integrated run passed 199 checks: 129 browser/editor checks and 70
 native shell checks. This includes source/visual switching, Save with caret and
 Undo retention, lazy editor isolation, read-only native commands, source-search
 workers, export replacement and asset reuse, untouched HTML preservation,
-external-file conflicts and multi-window recovery. The test uses local
+external-file conflicts, multi-window recovery, document/tab context commands,
+inactive-document actions, independent duplicate images and sidebar filename
+resizing. The test uses local
 video fixtures; it does not exercise online playback or request capture access.
 See [the parity audit](PARITY.md) for coverage and remaining manual cases.
 

@@ -14,7 +14,7 @@ Evidence labels identify passing checks on this Mac: **Model** is
 `Tests/StoreTests.m`; **Services** is `Tests/native-services-tests.m`;
 **Scanner** is `Tests/UnusedImageTests.m`; **App integration** is the real
 AppKit/WKWebView run in `Resources/Web/mac-self-test.js` and
-`Sources/SINNativeSelfTest.m`. **UI smoke** identifies an interaction observed in
+`Sources/SINNativeSelfTest.m` and `Sources/SINContextMenuSelfTest.m`. **UI smoke** identifies an interaction observed in
 the running Mac app. **Code inspection** identifies implemented behavior without
 a dedicated passing assertion. **Manual** identifies remaining acceptance checks.
 A passing check covers its stated case, not every interaction in a row.
@@ -60,7 +60,8 @@ A passing check covers its stated case, not every interaction in a row.
 | Application storage relocation; old files retained as backup | Profile directory copy with occupied destination rejection | Model for relocation, retained backup and occupied destination |
 | --data-dir selects existing profile | Native app launch argument handling | Code inspection. Manual: launch with an existing portable profile |
 | Browser cache separated from persistent profile | WKWebsiteDataStore.nonPersistentDataStore | Code inspection of explicit nonpersistent WebKit configuration |
-| Native titlebar, tabs, resizable document list, ordering/pinning/recent files | AppKit window, native navigator, profile recent list | App integration for lazy document switching and buffer isolation. Manual: drag order, pinning, resize and recent-file UI |
+| Native titlebar, tabs, resizable document list, ordering/pinning/recent files | AppKit window, native navigator, profile recent list; filename labels follow the available row width | App integration for lazy document switching, buffer isolation and label resizing. UI smoke for a timestamped filename displayed in full at the existing sidebar width. Manual: drag order and recent-file UI |
+| Document and tab right-click commands | Shared native menu in Windows order: Rename, Duplicate, Pin/Unpin, Lock/Unlock, Delete, Copy Full Path, Copy for AI Use, Open Containing Folder, Revert, Close | Context-menu integration checks cover labels/order, draft/saved/missing/locked/pinned states, inactive-document targeting, duplication, lock/AI copy, confirmed/cancelled Revert and Close. UI smoke for all ten commands on both an inactive document row and inactive tab |
 | Prompt Explorer supported file filter, icons, folders, lazy children, filesystem refresh | NSOutlineView/NSWorkspace and native filesystem enumeration | Code inspection. Manual: filters, links and refresh UI |
 | Image/text/Markdown/PDF previews outside document collection | Native preview host; PDFKit replaces Windows WebView2 PDF viewer | App integration for preview collection isolation and retained active HTML. Manual: each preview format and return UI |
 | Unused-image colors and safe image-folder deletion based on current HTML | Native explorer reference scan and file action checks | Scanner for unsaved/cross-document references, CSS/srcset/base URLs, entity/percent paths, matching folders, case identity and fail-closed errors. Manual: explorer colors and Trash interaction |
@@ -78,7 +79,7 @@ Run all local checks with the installed compiler and Apple frameworks:
 
 The latest validation passed 107 persistence assertions, 133 native service checks,
 62 unused-image scanner checks, and syntax parsing of 51 JavaScript modules.
-The integrated app run passed 171 checks (129 browser/editor checks and 42 native
+The integrated app run passed 199 checks (129 browser/editor checks and 70 native
 shell checks); its result is recorded in `Tests/last-web-results.json` with a
 snapshot at `build/self-test.png`. Counts include fixture and request assertions;
 they are not counts of distinct features. **Manual** cases above remain outside

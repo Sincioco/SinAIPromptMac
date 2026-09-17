@@ -55,6 +55,15 @@ their creation time in the Mac's local time zone. Save and auto-save add `.html`
 Recovery retains the original draft name, including older `Prompt N` names and
 names you choose yourself.
 
+Right-click a document in **Documents** or on its tab for the same commands:
+Rename, Duplicate, Pin/Unpin, Lock/Unlock, Delete, Copy Full Path,
+Copy for AI Use, Open Containing Folder, Revert to Last Saved, and Close.
+Commands apply to the document you clicked. Copy for AI Use saves and locks that
+document, then copies the instruction referring to its path. Revert asks before
+discarding changes, and Delete moves files to Trash. File-dependent commands are
+disabled for unsaved drafts.
+Document names use the available sidebar width as you resize it.
+
 ## Images and capture
 
 Paste or drop images, choose embedded PNG, separate PNG, or an original-file
@@ -123,7 +132,7 @@ folder for autosaving new documents, startup restoration and save-on-close.
 This builds the app, runs native persistence, service and unused-image scanner
 checks, parses the JavaScript with Apple's installed JavaScriptCore, then runs
 editor and native shell checks in the real WKWebView using an isolated temporary
-profile. The latest integrated run passed 171 checks; the
+profile. The latest integrated run passed 199 checks; the
 [parity audit](docs/PARITY.md) records each suite's evidence and remaining manual
 cases. Clipboard tests restore the prior pasteboard. No screen-recording
 permission is requested by automated tests. Generated results and screenshots

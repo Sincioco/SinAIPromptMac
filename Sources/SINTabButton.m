@@ -2,6 +2,7 @@
 @implementation SINTabButton
 - (instancetype)initWithFrame:(NSRect)frame {if((self=[super initWithFrame:frame]))[self registerForDraggedTypes:@[@"com.sin.aiprompt.document"]];return self;}
 - (void)mouseDown:(NSEvent *)event {
+    if(event.modifierFlags & NSEventModifierFlagControl){[self rightMouseDown:event];return;}
     NSPoint start=event.locationInWindow;
     while(YES){NSEvent *next=[self.window nextEventMatchingMask:NSEventMaskLeftMouseUp|NSEventMaskLeftMouseDragged];
         if(next.type==NSEventTypeLeftMouseUp){[self sendAction:self.action to:self.target];return;}
@@ -10,6 +11,8 @@
         NSDraggingItem *drag=[[NSDraggingItem alloc] initWithPasteboardWriter:item];NSBitmapImageRep *bitmap=[self bitmapImageRepForCachingDisplayInRect:self.bounds];[self cacheDisplayInRect:self.bounds toBitmapImageRep:bitmap];NSImage *image=[[NSImage alloc] initWithSize:self.bounds.size];[image addRepresentation:bitmap];[drag setDraggingFrame:self.bounds contents:image];[self beginDraggingSessionWithItems:@[drag] event:next source:self];return;
     }
 }
+- (NSMenu *)menuForEvent:(NSEvent *)event {return self.documentMenu?self.documentMenu(self.identifier):[super menuForEvent:event];}
+- (void)rightMouseDown:(NSEvent *)event {NSMenu *menu=[self menuForEvent:event];if(menu.numberOfItems)[NSMenu popUpContextMenu:menu withEvent:event forView:self];}
 - (void)otherMouseDown:(NSEvent *)event {if(event.buttonNumber==2&&self.closeDocument)self.closeDocument(self.identifier);else [super otherMouseDown:event];}
 - (NSDragOperation)draggingSession:(NSDraggingSession *)session sourceOperationMaskForDraggingContext:(NSDraggingContext)context {return NSDragOperationMove;}
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {return [sender.draggingPasteboard stringForType:@"com.sin.aiprompt.document"]?NSDragOperationMove:NSDragOperationNone;}

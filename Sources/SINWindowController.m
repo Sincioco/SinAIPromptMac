@@ -43,6 +43,8 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
     __weak typeof(self) weakSelf=self;
     self.navigator.selected=^(id item){if([item isKindOfClass:SINDocument.class])[weakSelf activate:item];else if([item isKindOfClass:NSDictionary.class])[weakSelf.editor evaluate:[NSString stringWithFormat:@"window.editor.outline.jump(%@)",item[@"index"]] completion:nil];else [weakSelf openPaths:@[item]];};
     self.navigator.action=^(NSString *action,id item){[weakSelf navigateAction:action item:item];};
+    self.navigator.documentMenu=^NSMenu *(SINDocument *document){return [weakSelf documentContextMenu:document];};
+    self.navigator.contextActionsEnabled=^BOOL{return weakSelf&&!weakSelf.annotating&&!weakSelf.saving&&!weakSelf.window.attachedSheet;};
     self.navigator.reordered=^(NSArray *documents){weakSelf.documents=documents.mutableCopy;[weakSelf refresh];[weakSelf persist];};
 }
 - (void)setPreview:(NSView *)preview { _preview=preview;[self layoutChrome]; }
@@ -82,7 +84,9 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
         __weak typeof(self) weakSelf=self;
         for(SINDocument *doc in self.documents){SINTabButton *button=[[SINTabButton alloc] initWithFrame:NSMakeRect(0,0,100,28)];button.target=self;button.action=@selector(tabClicked:);button.identifier=doc.identifier;button.bezelStyle=NSBezelStyleRounded;[button setButtonType:NSButtonTypePushOnPushOff];
             button.moveDocument=^(NSString *source,NSString *target){SINWindowController *owner=weakSelf;NSUInteger from=[owner.documents indexOfObjectPassingTest:^BOOL(SINDocument *d,NSUInteger i,BOOL *stop){return[d.identifier isEqual:source];}],to=[owner.documents indexOfObjectPassingTest:^BOOL(SINDocument *d,NSUInteger i,BOOL *stop){return[d.identifier isEqual:target];}];if(from==NSNotFound||to==NSNotFound||from==to)return;SINDocument *moved=owner.documents[from];[owner.documents removeObjectAtIndex:from];[owner.documents insertObject:moved atIndex:to];owner.navigator.sortMode=@"manual";owner.store.settings[@"documentSort"]=@"manual";[owner refresh];[owner persist];};
-            button.closeDocument=^(NSString *identifier){for(SINDocument *d in weakSelf.documents)if([d.identifier isEqual:identifier]){[weakSelf closeDocument:d];break;}};[self.tabs addArrangedSubview:button];
+            button.closeDocument=^(NSString *identifier){if(weakSelf.annotating)return;for(SINDocument *d in weakSelf.documents)if([d.identifier isEqual:identifier]){[weakSelf closeDocument:d];break;}};
+            button.documentMenu=^NSMenu *(NSString *identifier){for(SINDocument *d in weakSelf.documents)if([d.identifier isEqual:identifier])return [weakSelf documentContextMenu:d];return nil;};
+            [self.tabs addArrangedSubview:button];
         }
         NSButton *add=[NSButton buttonWithTitle:@"+" target:self action:@selector(newClicked:)];[self.tabs addArrangedSubview:add];
     }
@@ -174,7 +178,7 @@ static NSError *ShellError(NSString *text){return[NSError errorWithDomain:@"SinS
     else if([command isEqual:@"rename"])[self renameDocument:self.active];
     else if([command isEqual:@"exportHTML"])[self exportDocument:NO];
     else if([command isEqual:@"exportMarkdown"])[self exportDocument:YES];
-    else if([command isEqual:@"lock"]||[command isEqual:@"unlock"]){BOOL lock=[command isEqual:@"lock"];void(^change)(void)=^{NSError *e=nil;if([self.active setFileReadOnly:lock error:&e]){[self.editor applyPreferences];[self refresh];}else[self showError:e];};if(lock)[self saveDocument:self.active saveAs:NO completion:^(BOOL saved){if(saved)change();}];else change();}
+    else if([command isEqual:@"lock"]||[command isEqual:@"unlock"])[self changeDocumentLock:self.active locked:[command isEqual:@"lock"] completion:nil];
     else if([command isEqual:@"date"]||[command isEqual:@"longDate"]||[command isEqual:@"dateSeparator"]){
         NSArray *patterns=@[@"EEEE, MMMM d, yyyy 'at' h:mm a",@"M/d/yyyy",@"M/d/yyyy h:mm a",@"yyyyMMddHHmm",@"yyyy-MM-dd HHmm",@"yyyy-MM-dd' - 'HHmm"];
         NSInteger choice=[command isEqual:@"longDate"]?0:MIN(5,MAX(0,[self.store.settings[@"dateTimeFormat"] integerValue]));

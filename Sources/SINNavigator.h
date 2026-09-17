@@ -9,8 +9,11 @@
 @property(nonatomic,copy) NSArray<NSDictionary*> *headings;
 @property(nonatomic,copy) void (^selected)(id item);
 @property(nonatomic,copy) void (^action)(NSString *command,id item);
+@property(nonatomic,copy) NSMenu *(^documentMenu)(SINDocument *document);
+@property(nonatomic,copy) BOOL (^contextActionsEnabled)(void);
 @property(nonatomic,copy) void (^reordered)(NSArray<SINDocument*> *documents);
 @property(nonatomic,strong) NSOutlineView *outline;
 - (void)refresh;
 - (void)selectDocument:(SINDocument *)document;
+- (NSMenu *)contextMenuForItem:(id)item;
 @end

@@ -3,6 +3,10 @@
 #import "SINSearchPanel.h"
 #import "SINAppDelegate.h"
 
+@interface SINWindowController (ContextMenuSelfTest)
+- (void)runNativeContextMenuChecks:(void (^)(NSArray<NSString *> *,NSError *))completion;
+@end
+
 static NSError *NativeCheckError(NSString *message) { return [NSError errorWithDomain:@"SinNativeSelfTest" code:1 userInfo:@{NSLocalizedDescriptionKey:message}]; }
 static void LoadedEditor(SINEditor *editor, void (^done)(NSError *)) {
     if(!editor){done(NativeCheckError(@"The active native editor was not created."));return;}
@@ -226,6 +230,9 @@ static NSDictionary *NativeAssetSnapshot(NSString *folder,NSError **error) {
         },
         ^(void (^next)(NSError *)){
             [scratch runNativeLayoutChecks:^(NSArray<NSString *> *layoutChecks,NSError *error){[checks addObjectsFromArray:layoutChecks];next(error);}];
+        },
+        ^(void (^next)(NSError *)){
+            [scratch runNativeContextMenuChecks:^(NSArray<NSString *> *menuChecks,NSError *error){[checks addObjectsFromArray:menuChecks];next(error);}];
         },
         ^(void (^next)(NSError *)){
             [scratch.editor showSource:YES completion:^{

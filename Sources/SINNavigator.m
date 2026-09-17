@@ -4,11 +4,26 @@
 @property(nonatomic,copy) void(^keyAction)(NSString *);
 @end
 @implementation SINOutlineView
+- (NSMenu *)menuForEvent:(NSEvent *)event {
+    if(event.type==NSEventTypeRightMouseDown||(event.type==NSEventTypeLeftMouseDown&&(event.modifierFlags&NSEventModifierFlagControl))){
+        NSPoint point=[self convertPoint:event.locationInWindow fromView:nil];if([self rowAtPoint:point]<0)return nil;
+    }
+    return [super menuForEvent:event];
+}
 - (void)keyDown:(NSEvent *)event {
     if(event.keyCode==96){if(self.keyAction)self.keyAction(@"refresh");return;}
     if(event.keyCode==120){if(self.keyAction)self.keyAction(@"rename");return;}
     if(event.keyCode==51||event.keyCode==117){if(self.keyAction)self.keyAction(@"trash");return;}
     [super keyDown:event];
+}
+@end
+@interface SINNavigatorCell : NSTableCellView
+@end
+@implementation SINNavigatorCell
+- (void)layout {
+    [super layout];
+    self.imageView.frame=NSMakeRect(2,5,18,18);
+    self.textField.frame=NSMakeRect(26,5,MAX(0,self.bounds.size.width-30),20);
 }
 @end
 @interface SINNavigator ()
@@ -27,11 +42,17 @@
     NSButton *new=[NSButton buttonWithTitle:@"+" target:self action:@selector(newDocument:)];new.frame=NSMakeRect(208,528,34,28);new.autoresizingMask=NSViewMinXMargin|NSViewMinYMargin;[self.view addSubview:new];
     self.foldersButton=[NSButton checkboxWithTitle:@"Show folders" target:self action:@selector(toggleFolders:)];self.foldersButton.state=self.showFolders?NSControlStateValueOn:NSControlStateValueOff;self.foldersButton.frame=NSMakeRect(10,499,160,24);self.foldersButton.autoresizingMask=NSViewMinYMargin;[self.view addSubview:self.foldersButton];
     NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,250,492)];scroll.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;scroll.hasVerticalScroller=YES;
-    self.outline=[[SINOutlineView alloc] initWithFrame:scroll.bounds];__weak typeof(self) weakSelf=self;((SINOutlineView*)self.outline).keyAction=^(NSString *command){SINNavigator *owner=weakSelf;if([command isEqual:@"refresh"]){[owner refresh];return;}id item=[owner.outline itemAtRow:owner.outline.selectedRow];if(!item||[item isKindOfClass:NSDictionary.class])return;if(owner.action)owner.action([item isKindOfClass:NSString.class]?[command stringByAppendingString:@"Path"]:command,item);};NSTableColumn *column=[[NSTableColumn alloc] initWithIdentifier:@"name"];column.width=240;[self.outline addTableColumn:column];self.outline.outlineTableColumn=column;self.outline.headerView=nil;self.outline.rowHeight=29;self.outline.style=NSTableViewStyleSourceList;
+    self.outline=[[SINOutlineView alloc] initWithFrame:scroll.bounds];__weak typeof(self) weakSelf=self;((SINOutlineView*)self.outline).keyAction=^(NSString *command){
+        SINNavigator *owner=weakSelf;if([command isEqual:@"refresh"]){[owner refresh];return;}
+        if(owner.outline.selectedRow<0)return;id item=[owner.outline itemAtRow:owner.outline.selectedRow];
+        NSString *action=[item isKindOfClass:NSString.class]?[command stringByAppendingString:@"Path"]:command;
+        for(NSMenuItem *entry in [owner contextMenuForItem:item].itemArray)if(entry.enabled&&[entry.representedObject[@"command"] isEqual:action]){[NSApp sendAction:entry.action to:entry.target from:entry];break;}
+    };NSTableColumn *column=[[NSTableColumn alloc] initWithIdentifier:@"name"];column.width=240;column.minWidth=40;column.resizingMask=NSTableColumnAutoresizingMask;[self.outline addTableColumn:column];self.outline.columnAutoresizingStyle=NSTableViewLastColumnOnlyAutoresizingStyle;self.outline.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;self.outline.outlineTableColumn=column;self.outline.headerView=nil;self.outline.rowHeight=29;self.outline.style=NSTableViewStyleSourceList;
     self.outline.delegate=self;self.outline.dataSource=self;self.outline.target=self;self.outline.doubleAction=@selector(doubleClick:);self.outline.autosaveExpandedItems=NO;
     [self.outline registerForDraggedTypes:@[@"com.sin.aiprompt.document",NSPasteboardTypeFileURL]];
     NSMenu *menu=NSMenu.new;menu.delegate=self;self.outline.menu=menu;scroll.documentView=self.outline;[self.view addSubview:scroll];
 }
+- (void)viewDidLayout {[super viewDidLayout];[self.outline sizeLastColumnToFit];}
 - (NSArray *)items:(id)item {
     if(self.mode==1)return item?@[]:self.documents;
     if(self.mode==2)return item?@[]:self.headings;
@@ -61,7 +82,7 @@
 }
 - (NSView *)outlineView:(NSOutlineView *)view viewForTableColumn:(NSTableColumn *)column item:(id)item {
     NSTableCellView *cell=[view makeViewWithIdentifier:@"item" owner:self];
-    if(!cell){cell=[[NSTableCellView alloc] initWithFrame:NSMakeRect(0,0,230,29)];cell.identifier=@"item";NSImageView *icon=[[NSImageView alloc] initWithFrame:NSMakeRect(2,5,18,18)];cell.imageView=icon;[cell addSubview:icon];NSTextField *text=[NSTextField labelWithString:@""];text.frame=NSMakeRect(26,5,198,20);text.autoresizingMask=NSViewWidthSizable;text.lineBreakMode=NSLineBreakByTruncatingMiddle;cell.textField=text;[cell addSubview:text];}
+    if(!cell){cell=[[SINNavigatorCell alloc] initWithFrame:NSMakeRect(0,0,column.width,29)];cell.identifier=@"item";NSImageView *icon=[[NSImageView alloc] initWithFrame:NSMakeRect(2,5,18,18)];cell.imageView=icon;[cell addSubview:icon];NSTextField *text=[NSTextField labelWithString:@""];text.frame=NSMakeRect(26,5,MAX(0,column.width-30),20);text.autoresizingMask=NSViewWidthSizable;text.lineBreakMode=NSLineBreakByTruncatingMiddle;cell.textField=text;[cell addSubview:text];}
     cell.textField.textColor=NSColor.labelColor;
     if([item isKindOfClass:SINDocument.class]){SINDocument *doc=item;cell.textField.stringValue=[NSString stringWithFormat:@"%@%@%@",doc.readOnly?@"🔒 ":@"",doc.name,doc.modified?@" *":@""];cell.imageView.image=[NSImage imageWithSystemSymbolName:@"doc.text" accessibilityDescription:nil];cell.toolTip=doc.path;}
     else if([item isKindOfClass:NSDictionary.class]){cell.textField.stringValue=[[@"" stringByPaddingToLength:[item[@"level"] integerValue]*2 withString:@" " startingAtIndex:0] stringByAppendingString:item[@"text"]?:@""];cell.imageView.image=nil;}
@@ -87,11 +108,28 @@
 - (void)selectDocument:(SINDocument *)document {if(self.mode!=1)return;NSInteger row=[self.documents indexOfObject:document];if(row!=NSNotFound){self.updating=YES;[self.outline selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];self.updating=NO;}}
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];NSInteger row=self.outline.clickedRow>=0?self.outline.clickedRow:self.outline.selectedRow;if(row<0)return;id item=[self.outline itemAtRow:row];
-    NSArray *entries=[item isKindOfClass:SINDocument.class]?@[@[@"Pin / Unpin",@"pin"],@[@"Rename…",@"rename"],@[@"Duplicate",@"duplicate"],@[@"Close",@"close"],@[@"Copy Full Path",@"copyPath"],@[@"Show in Finder",@"reveal"],@[@"Open Containing Folder",@"openFolder"],@[@"Move to Trash…",@"trash"]]:@[@[@"Rename…",@"renamePath"],@[@"Show in Finder",@"revealPath"],@[@"Open Containing Folder",@"openFolderPath"],@[@"Move to Trash…",@"trashPath"]];
-    if([item isKindOfClass:NSDictionary.class])return;
-    for(NSArray *entry in entries){NSMenuItem *mi=[[NSMenuItem alloc] initWithTitle:entry[0] action:@selector(contextAction:) keyEquivalent:@""];mi.target=self;mi.representedObject=@{@"command":entry[1],@"item":item};[menu addItem:mi];}
+    NSMenu *built=[self contextMenuForItem:item];menu.autoenablesItems=NO;
+    for(NSMenuItem *entry in built.itemArray.copy){[built removeItem:entry];[menu addItem:entry];}
 }
-- (void)contextAction:(NSMenuItem *)item {if(self.action)self.action(item.representedObject[@"command"],item.representedObject[@"item"]);}
+- (NSMenu *)contextMenuForItem:(id)item {
+    if([item isKindOfClass:SINDocument.class])return self.documentMenu?self.documentMenu(item):NSMenu.new;
+    NSMenu *menu=NSMenu.new;menu.autoenablesItems=NO;
+    if(![item isKindOfClass:NSString.class])return menu;
+    NSString *path=item;BOOL directory=NO;BOOL exists=[NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&directory];
+    BOOL imageFolder=NO;
+    if(directory)for(NSString *extension in @[@"html",@"htm"]){BOOL folder=NO;if([NSFileManager.defaultManager fileExistsAtPath:[path stringByAppendingPathExtension:extension] isDirectory:&folder]&&!folder){imageFolder=YES;break;}}
+    BOOL available=exists&&(!self.contextActionsEnabled||self.contextActionsEnabled());
+    void(^add)(NSString *,NSString *,NSString *)=^(NSString *title,NSString *command,NSString *key){
+        NSMenuItem *entry=[[NSMenuItem alloc] initWithTitle:title action:@selector(contextAction:) keyEquivalent:key];entry.keyEquivalentModifierMask=0;
+        entry.target=self;entry.enabled=available;entry.representedObject=@{@"command":command,@"item":path};[menu addItem:entry];
+    };
+    if(!directory&&[@[@"html",@"htm",@"png",@"jpg",@"jpeg",@"gif"] containsObject:path.pathExtension.lowercaseString])add(@"Rename…",@"renamePath",[NSString stringWithFormat:@"%C",(unichar)NSF2FunctionKey]);
+    if(!directory||imageFolder)add(@"Delete to Trash…",@"trashPath",[NSString stringWithFormat:@"%C",(unichar)NSDeleteCharacter]);
+    if(menu.numberOfItems)[menu addItem:NSMenuItem.separatorItem];
+    add(@"Show in Finder",@"revealPath",@"");add(@"Open Containing Folder",@"openFolderPath",@"");
+    return menu;
+}
+- (void)contextAction:(NSMenuItem *)item {if(item.enabled&&self.action)self.action(item.representedObject[@"command"],item.representedObject[@"item"]);}
 - (id<NSPasteboardWriting>)outlineView:(NSOutlineView *)view pasteboardWriterForItem:(id)item {if(![item isKindOfClass:SINDocument.class])return nil;NSPasteboardItem *pb=NSPasteboardItem.new;[pb setString:[item identifier] forType:@"com.sin.aiprompt.document"];return pb;}
 - (NSDragOperation)outlineView:(NSOutlineView*)view validateDrop:(id<NSDraggingInfo>)info proposedItem:(id)item proposedChildIndex:(NSInteger)index {if([info.draggingPasteboard.types containsObject:NSPasteboardTypeFileURL])return NSDragOperationCopy;return self.mode==1&&!item?NSDragOperationMove:NSDragOperationNone;}
 - (BOOL)outlineView:(NSOutlineView*)view acceptDrop:(id<NSDraggingInfo>)info item:(id)item childIndex:(NSInteger)index {

@@ -1,6 +1,10 @@
 #import "SINWindowController.h"
 #import "SINNativeServices.h"
+#import "SINAppDelegate.h"
 #import <PDFKit/PDFKit.h>
+@interface SINWindowController (NavigationEditor)
+- (SINEditor *)editorFor:(SINDocument *)document;
+@end
 @interface SINPreviewContainer : NSView
 @property(nonatomic,strong) SINEditor *previewEditor;
 @end
@@ -15,10 +19,21 @@
     if([action isEqual:@"showFolders"]){self.store.settings[@"explorerShowFolders"]=item;[self persist];return;}
     if([action isEqual:@"openDropped"]){[self openPaths:item];return;}
     if([action isEqual:@"chooseFolder"]||[action isEqual:@"new"]){[self handleCommand:action];return;}
+    if(self.annotating||self.saving||self.window.attachedSheet)return;
+    if([item isKindOfClass:SINDocument.class]&&![self.documents containsObject:document])return;
     if([action isEqual:@"reveal"]||[action isEqual:@"revealPath"]){if(path)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];return;}
     if([action isEqual:@"openFolder"]||[action isEqual:@"openFolderPath"]){if(path)[NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:path.stringByDeletingLastPathComponent]];return;}
-    if([action isEqual:@"copyPath"]){if(path){[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:path forType:NSPasteboardTypeString];}return;}
-    if([action isEqual:@"pin"]){document.pinned=!document.pinned;[self refresh];[self persist];return;}
+    if([action isEqual:@"copyPath"]){if(path){NSString *text=[path containsString:@" "]?[NSString stringWithFormat:@"\"%@\"",path]:path;[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:text forType:NSPasteboardTypeString];}return;}
+    if([action isEqual:@"pin"]){
+        document.pinned=!document.pinned;NSString *mode=self.navigator.sortMode;
+        [self.documents sortWithOptions:NSSortStable usingComparator:^NSComparisonResult(SINDocument *a,SINDocument *b){
+            if(a.pinned!=b.pinned)return a.pinned?NSOrderedAscending:NSOrderedDescending;
+            return [mode isEqual:@"manual"]?NSOrderedSame:([mode isEqual:@"created"]?[b.createdDate compare:a.createdDate]:[b.modifiedDate compare:a.modifiedDate]);
+        }];[self refresh];[self persist];return;
+    }
+    if([action isEqual:@"lock"]||[action isEqual:@"unlock"]){[self changeDocumentLock:document locked:[action isEqual:@"lock"] completion:nil];return;}
+    if([action isEqual:@"copyAI"]){[self copyDocumentForAI:document];return;}
+    if([action isEqual:@"revert"]){[self revertDocument:document];return;}
     if([action isEqual:@"rename"]){[self renameDocument:document];return;}
     if([action isEqual:@"close"]){[self closeDocument:document];return;}
     if([action isEqual:@"trash"]||[action isEqual:@"trashPath"]){if(path)[self trashPath:path];return;}
@@ -28,12 +43,33 @@
         return;
     }
     if([action isEqual:@"duplicate"]){
-        SINEditor *editor=self.editors[document.identifier];if(!editor){[self activate:document];editor=self.editor;}
-        [editor exportKind:@"duplicate" completion:^(NSString *html,NSError *error){if(error){[self showError:error];return;}SINDocument *copy=[self.store newDocument:&error];if(!copy){[self showError:error];return;}copy.text=html;copy.encodingName=document.encodingName;copy.zoom=document.zoom;copy.autosave=NO;
-            NSString *stem=document.name.stringByDeletingPathExtension;NSUInteger number=2;NSString *name;do{name=[NSString stringWithFormat:@"%@ %lu.html",stem,(unsigned long)number++];}while([self.documents indexOfObjectPassingTest:^BOOL(SINDocument *d,NSUInteger i,BOOL *stop){return[d.name isEqual:name];}]!=NSNotFound||[NSFileManager.defaultManager fileExistsAtPath:[document.path.stringByDeletingLastPathComponent stringByAppendingPathComponent:name]?:@""]);
-            copy.draftName=name;if(document.path){NSString *destination=[document.path.stringByDeletingLastPathComponent stringByAppendingPathComponent:name];if(![copy saveToPath:destination overwriteConflict:NO error:&error]){[self showError:error];return;}}
+        SINEditor *editor=[self editorFor:document];editor.services.window=self.window;self.saving=YES;
+        NSString *stem=document.name.stringByDeletingPathExtension,*extension=document.name.pathExtension;NSUInteger number=2;NSString *name,*destination;
+        NSMutableArray *windows=[((SINAppDelegate *)NSApp.delegate).windows mutableCopy]?:NSMutableArray.new;if(![windows containsObject:self])[windows addObject:self];
+        NSMutableSet *names=NSMutableSet.new;for(SINWindowController *window in windows)for(SINDocument *open in window.documents)[names addObject:open.name.lowercaseString];
+        do{name=[NSString stringWithFormat:@"%@ %lu%@%@",stem,(unsigned long)number++,extension.length?@".":@"",extension];destination=[document.path.stringByDeletingLastPathComponent stringByAppendingPathComponent:name];}
+        while([names containsObject:name.lowercaseString]||(destination&&([NSFileManager.defaultManager fileExistsAtPath:destination]||[NSFileManager.defaultManager fileExistsAtPath:destination.stringByDeletingPathExtension])));
+        NSString *staging=nil,*stagedPath=nil;
+        if(destination){
+            staging=[NSTemporaryDirectory() stringByAppendingPathComponent:[@"SinAI-duplicate-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+            NSError *error=nil;if(![NSFileManager.defaultManager createDirectoryAtPath:staging withIntermediateDirectories:YES attributes:nil error:&error]){self.saving=NO;[self showError:error];return;}
+            stagedPath=[staging stringByAppendingPathComponent:name];editor.services.saveAsPath=stagedPath;
+        }
+        void (^create)(NSString *,NSError *)=^(NSString *html,NSError *error){
+            editor.services.saveAsPath=nil;
+            if(error||![self.documents containsObject:document]){if(staging)[NSFileManager.defaultManager removeItemAtPath:staging error:NULL];self.saving=NO;if(error)[self showError:error];return;}
+            SINDocument *copy=SINDocument.new;copy.text=html;copy.encodingName=document.encodingName;copy.newline=document.newline;copy.zoom=document.zoom;copy.autosave=document.autosave&&document.path!=nil;
+            copy.draftName=name;
+            if(destination){
+                BOOL saved=[copy saveToPath:stagedPath overwriteConflict:NO error:&error]&&[copy saveAsToPath:destination error:&error];
+                [NSFileManager.defaultManager removeItemAtPath:staging error:NULL];
+                if(!saved){self.saving=NO;[self showError:error];return;}[self.store addRecentPath:destination];
+            }
+            self.saving=NO;
             [self.documents addObject:copy];[self activate:copy];
-        }];return;
+        };
+        [editor exportKind:destination?@"relocate":@"duplicate" completion:create];
+        return;
     }
 }
 - (void)showPreview:(NSString *)path {

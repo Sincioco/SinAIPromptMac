@@ -92,8 +92,70 @@ static NSError *FileActionError(NSString *message) { return [NSError errorWithDo
     document.modifiedDate = disk.modifiedDate;
     SINEditor *editor = self.editors[document.identifier];
     if (editor.showingSource) editor.sourceView.string = document.text;
+    [editor.sourceView.undoManager removeAllActions];
     [editor reload]; [self refresh]; [self persist];
     return YES;
+}
+- (void)changeDocumentLock:(SINDocument *)document locked:(BOOL)locked completion:(void (^)(BOOL))completion {
+    void (^done)(BOOL)=^(BOOL changed){if(completion)completion(changed);};
+    if(!document||![self.documents containsObject:document]||self.saving||self.annotating||self.window.attachedSheet){done(NO);return;}
+    if(document.path){
+        NSError *error=nil;NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:document.path error:&error];
+        if(!attributes){[self showError:error];done(NO);return;}
+        document.readOnly=([attributes[NSFilePosixPermissions] unsignedIntegerValue]&0222)==0||![NSFileManager.defaultManager isWritableFileAtPath:document.path];
+    }
+    void (^synchronize)(void)=^{
+        NSMutableArray *windows=[((SINAppDelegate *)NSApp.delegate).windows mutableCopy]?:NSMutableArray.new;
+        if(![windows containsObject:self])[windows addObject:self];
+        for(NSWindow *window in NSApp.windows)if([window.windowController isKindOfClass:SINWindowController.class]&&![windows containsObject:window.windowController])[windows addObject:window.windowController];
+        for(SINWindowController *window in windows){
+            BOOL affected=NO;
+            for(SINDocument *other in window.documents)if(other==document||(document.path&&([other.path isEqual:document.path]||SINPathsReferToSameFile(other.path,document.path)))){
+                other.readOnly=document.readOnly;[window.editors[other.identifier] applyPreferences];affected=YES;
+            }
+            if(affected){[window refresh];[window persist];}
+        }
+    };
+    if(document.readOnly==locked){synchronize();done(YES);return;}
+    void (^change)(void)=^{
+        if(![self.documents containsObject:document]){done(NO);return;}
+        NSError *error=nil;
+        if(![document setFileReadOnly:locked error:&error]){[self showError:error];done(NO);return;}
+        synchronize();
+        done(YES);
+    };
+    if(locked){[self saveDocument:document saveAs:NO completion:^(BOOL saved){if(saved)change();else done(NO);}];return;}
+    NSAlert *alert=NSAlert.new;alert.messageText=@"Unlock Document";
+    alert.informativeText=@"Remove the read-only permission and allow changes to this file?";
+    [alert addButtonWithTitle:@"Unlock"];[alert addButtonWithTitle:@"Cancel"];
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){if(response==NSAlertFirstButtonReturn)change();else done(NO);}];
+}
+- (void)copyDocumentForAI:(SINDocument *)document {
+    [self changeDocumentLock:document locked:YES completion:^(BOOL success){
+        if(!success||!document.readOnly||!document.path)return;
+        void (^copy)(void)=^{
+            if(![self.documents containsObject:document]||!document.readOnly||!document.path)return;
+            if(document.modified){[self showError:FileActionError(@"Unlock and save the changed document before copying it for AI use.")];return;}
+            NSString *instruction=[NSString stringWithFormat:@"Read and execute the instructions in the \"%@\" file.",document.path];
+            [NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:instruction forType:NSPasteboardTypeString];
+        };
+        SINEditor *editor=self.editors[document.identifier];if(editor)[editor flush:copy];else copy();
+    }];
+}
+- (void)revertDocument:(SINDocument *)document {
+    if(!document.path||![self.documents containsObject:document]||self.saving||self.annotating||self.window.attachedSheet)return;
+    self.saving=YES;
+    void (^confirm)(void)=^{
+        NSAlert *alert=NSAlert.new;alert.messageText=@"Revert Document";
+        alert.informativeText=@"Revert this document to its last saved state? Unsaved changes will be discarded.";
+        [alert addButtonWithTitle:@"Revert"];[alert addButtonWithTitle:@"Cancel"];
+        alert.buttons.firstObject.keyEquivalent=@"";alert.buttons.lastObject.keyEquivalent=@"\r";
+        [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response){
+            if(response==NSAlertFirstButtonReturn&&[self.documents containsObject:document])[self reloadDocumentFromDisk:document];
+            self.saving=NO;
+        }];
+    };
+    SINEditor *editor=self.editors[document.identifier];if(editor)[editor flush:confirm];else confirm();
 }
 - (void)closeDocument:(SINDocument *)document {
     if (!document || self.saving) return;

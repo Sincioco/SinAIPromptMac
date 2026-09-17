@@ -44,6 +44,10 @@
 - (void)saveDocument:(SINDocument *)document saveAs:(BOOL)saveAs completion:(void (^)(BOOL))completion;
 - (void)closeDocument:(SINDocument *)document;
 - (void)renameDocument:(SINDocument *)document;
+- (void)changeDocumentLock:(SINDocument *)document locked:(BOOL)locked completion:(void (^)(BOOL))completion;
+- (void)copyDocumentForAI:(SINDocument *)document;
+- (void)revertDocument:(SINDocument *)document;
+- (BOOL)reloadDocumentFromDisk:(SINDocument *)document;
 - (void)exportDocument:(BOOL)markdown;
 // Called after a Save panel has confirmed the destination (including Replace).
 - (void)exportDocument:(BOOL)markdown toPath:(NSString *)path completion:(void (^)(NSError *))completion;
@@ -52,6 +56,9 @@
 @interface SINWindowController (NavigationActions)
 - (void)navigateAction:(NSString *)action item:(id)item;
 - (void)showPreview:(NSString *)path;
+@end
+@interface SINWindowController (ContextMenus)
+- (NSMenu *)documentContextMenu:(SINDocument *)document;
 @end
 @interface SINWindowController (Settings)
 - (void)showSettings;

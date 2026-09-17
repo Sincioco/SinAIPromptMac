@@ -2,4 +2,5 @@
 @interface SINTabButton : NSButton <NSDraggingSource,NSDraggingDestination>
 @property(nonatomic,copy) void (^moveDocument)(NSString *source,NSString *target);
 @property(nonatomic,copy) void (^closeDocument)(NSString *identifier);
+@property(nonatomic,copy) NSMenu *(^documentMenu)(NSString *identifier);
 @end
