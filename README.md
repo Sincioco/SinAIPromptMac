@@ -1,0 +1,136 @@
+# Sin — AI Prompt for Mac
+
+Objective-C macOS port of [Sincioco/SinAIPrompt](https://github.com/Sincioco/SinAIPrompt).
+The native shell uses AppKit and WKWebView; the rich-text editor and layered image
+annotation reuse the original application's plain HTML, CSS and JavaScript.
+
+**No Swift, npm, third-party libraries, downloaded tools, database, AI service,
+package restoration or network build step.** Build with the Apple developer tools
+already installed on your Mac.
+
+## Build and run
+
+```sh
+./build.sh
+open "build/Sin AI Prompt.app"
+```
+
+Or double-click `Build.command` to build and open the application. The app bundle
+is self-contained and uses macOS frameworks. You can copy it to Applications.
+Local builds are ad-hoc signed; this repository does not include an Apple Developer
+certificate or notarization. Building uses `xcrun clang`, `sips`, `iconutil` and
+`codesign` supplied by Apple. No dependency installer is run.
+
+Run `./scripts/package.sh` to build `build/SinAIPromptMac.zip` for copying to
+another Mac with the same processor architecture. The deployment target is
+macOS 13.3 or newer; this build was validated on macOS 26.6.2 with Apple silicon.
+
+For an independent portable profile:
+
+```sh
+"build/Sin AI Prompt.app/Contents/MacOS/SinAIPrompt" --data-dir "/Volumes/Data/Sin AI Prompt"
+```
+
+## Editing
+
+- New, open, save, Save As, Save All, duplicate, rename, close, recent documents,
+  multiple windows, draggable document tabs and a resizable navigation pane.
+- Original formatting ribbon: fonts, sizes, foreground/highlight palettes with
+  shared recent colors, formatting painter, paragraph styles, headings, lists,
+  alignment, links, code blocks and image tools.
+- Code blocks retain the original language lexers, full/preview/collapsed modes,
+  captions and editable source. Coloring is lexical rather than compiler based.
+- Switch between visual editing and native HTML source with **⇧⌘U**. Source has
+  line numbers, wrapping, native undo, encoding choices and LF/CRLF selection.
+- Find/replace supports HTML source or visual text, match case, whole words,
+  regular expressions, wrapping, a result list and Replace All. Regex work runs
+  in a disposable worker so an expensive expression cannot lock the editor.
+- Markdown paste/conversion and export, standalone HTML export, read-only locks,
+  document contents navigation, date/time formats and separators.
+- HTML head content and original scripts are preserved when saving. Document
+  scripts stay blocked in the editor; trusted editing code is separate.
+
+## Images and capture
+
+Paste or drop images, choose embedded PNG, separate PNG, or an original-file
+reference. Separate images live in the folder named after the HTML document and
+use SHA-256 content deduplication, including reuse after image renaming.
+
+Double-click an image, or choose **Editor**, to edit arrows, lines, rectangles,
+ellipses, text, image layers, colors, thickness, opacity, cropping and corner
+radii. Multi-selection, layer ordering, copy/paste, undo/redo, zoom, editable
+metadata and PMT version 1 object templates retain the original data formats.
+Original source images survive annotation and reversible crop changes.
+
+**Capture** uses native Mac display/window choices and configurable delay/cursor
+options. **Region Capture** starts a cancellable three-second countdown directly,
+then provides an undimmed frozen desktop, opposite-corner magnifier and pixel
+selection across monitors. Region Capture excludes the cursor and inserts a
+separate PNG in the document's image folder, matching the original workflow.
+The first capture needs macOS **Screen & System Audio Recording** permission;
+allow access in System Settings when you choose to use this feature. The native
+window picker replaces Windows' live window-thumbnail gallery.
+
+Image, text, Markdown and PDF previews stay outside the open document collection.
+PDFKit supplies the offline PDF viewer. Finder replaces Explorer; Trash replaces
+the Recycle Bin. Image rename updates its parent document references; unsafe
+image-folder deletion is rejected while existing images are still referenced.
+
+## Saving and recovery
+
+Settings, sessions and templates are JSON files in
+`~/Library/Application Support/Sin AI Prompt` by default. Settings can relocate
+application storage to an empty folder while keeping the old profile as backup.
+The chosen directory is recorded in `data-location.json` at the default location;
+`--data-dir` explicitly selects any profile. Browser cache is disposable and
+separate from documents and profile data.
+
+Atomic saves detect external changes and offer copy/reload/overwrite choices.
+Save As preserves the original document and its asset folder. Rename moves the
+HTML and its matching image folder together, retaining pending unsaved edits.
+Recovery snapshots preserve unsaved documents; settings include an optional
+folder for autosaving new documents, startup restoration and save-on-close.
+
+## Mac shortcuts
+
+| Action | Shortcut |
+| --- | --- |
+| New / Open / Save | ⌘N / ⌘O / ⌘S |
+| Save As / Save All | ⇧⌘S / ⌥⌘S |
+| New window / Close document | ⇧⌘N / ⌘W |
+| Visual / HTML source | ⇧⌘U |
+| Find / Replace | ⌘F / ⌥⌘F |
+| Next / Previous match | ⌘G / ⇧⌘G |
+| Navigation pane | ⇧⌘L |
+| Next / Previous document | ⇧⌘] / ⇧⌘[ |
+| Bold / Italic / Underline | ⌘B / ⌘I / ⌘U |
+| Undo / Redo | ⌘Z / ⇧⌘Z |
+| Date/time / Separator | ⌘D / ⌘L |
+| Zoom in / out / reset | ⌘+ / ⌘− / ⌘0 |
+| Settings | ⌘, |
+
+## Validation and implementation
+
+```sh
+./test.sh
+```
+
+This builds the app, runs native persistence, service and unused-image scanner
+checks, parses the JavaScript with Apple's installed JavaScriptCore, then runs
+editor and native shell checks in the real WKWebView using an isolated temporary
+profile. The latest integrated run passed 157 checks; the
+[parity audit](docs/PARITY.md) records each suite's evidence and remaining manual
+cases. Clipboard tests restore the prior pasteboard. No screen-recording
+permission is requested by automated tests. Generated results and screenshots
+stay in ignored directories.
+
+- [Feature parity and verification](docs/PARITY.md)
+- [WebKit compatibility and bridge](docs/WEB-PORT.md)
+- [Native services and capture behavior](docs/NATIVE-SERVICES.md)
+- [Reference source revision and artwork](docs/SOURCE-ORIGIN.md)
+
+Optional URL metadata, remote document images and YouTube playback need a network
+connection. Editing local documents, annotations, persistence, build and tests do
+not require third-party services. Online playback depends on the video's embedding
+policy; Open In Browser is available. Other macOS versions, live screen capture
+permissions and mixed-monitor UI behavior need target-machine acceptance checks.

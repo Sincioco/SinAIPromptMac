@@ -1,0 +1,115 @@
+import { request, escapeHtml } from './bridge.js';
+import {modernDocumentStyles,setDocumentStyle} from './document-styles.js';
+
+import {sourceColors} from './source-highlighting.js';
+import {cleanOriginalImages} from './original-images.js';
+import {documentRoot,isDocumentUrl} from './platform.js';
+import {restoreDocumentMetadata} from './document-isolation.js';
+
+export const documentStyles = `${modernDocumentStyles}body{background:#fff;overflow-wrap:break-word}img{max-width:100%;height:auto}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:6px 10px}`;
+export const codeStyles=`
+pre:is([data-sin-code],[data-sin-code-preview]){white-space:pre;overflow:auto;padding:18px;border:1px solid #d8dfe6;border-radius:6px;background:#fff;color:#000;font:14px/1.6 Consolas,monospace;tab-size:4}
+pre:is([data-sin-code],[data-sin-code-preview]) code{font:inherit;padding:0;background:transparent;white-space:inherit;overflow-wrap:normal}
+details[data-sin-code-display]{margin:1em 0;border:1px solid #d8dfe6;border-radius:6px;background:#fff;color:#1f2328}
+details[data-sin-code-display]>summary{cursor:pointer;padding:12px;font:14px/1.5 "Segoe UI",sans-serif;user-select:none}
+details[data-sin-code-display]>pre{margin:0;border:0;border-top:1px solid #d8dfe6;border-radius:0 0 6px 6px}
+details[data-sin-code-display] pre[data-sin-code-preview]{margin:10px 0 0;padding:0;border:0;user-select:text}
+details[data-sin-code-display][open] pre[data-sin-code-preview]{display:none}
+${sourceColors}`;
+export const editingStyles = `body{min-height:calc(100vh - 80px);outline:none}img[data-sin-selected]::selection,figure[data-sin-youtube]::selection,figure[data-sin-youtube] *::selection{background:transparent}figure[data-sin-youtube] [data-video-action]{cursor:pointer}pre[data-sin-code]{cursor:pointer}a{cursor:text}::highlight(sin-search){background:#ffff72;color:#111}
+/* Keep a marker's actual color visible while highlighted text is selected. */
+:is(mark,span[style*="background-color"]:not([style*="transparent"]):not([style*="rgba(0, 0, 0, 0)"]))::selection{background:transparent;color:currentColor}`;
+
+export function normalizeIndent(code) {
+  const lines = String(code).replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n');
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines.at(-1).trim()) lines.pop();
+  const indents = lines.filter(l => l.trim()).map(l => /^ */.exec(l)[0].length);
+  const minimum = indents.length ? Math.min(...indents) : 0;
+  return lines.map(l => l.slice(Math.min(minimum, /^ */.exec(l)[0].length))).join('\n');
+}
+export function parseHtml(html) { return new DOMParser().parseFromString(html || '<!doctype html><html data-sin-style-mode="modern"><head><meta charset="utf-8"><title>Prompt</title></head><body><p><br></p></body></html>', 'text/html'); }
+export function ensureStyle(doc) {
+  if (!doc.querySelector('style[data-sin-document]')) { const style = doc.createElement('style'); style.dataset.sinDocument = '1'; style.textContent = documentStyles; doc.head.append(style); }
+  let codeSheet=doc.querySelector('style[data-sin-code-styles]');
+  if(!codeSheet){codeSheet=doc.createElement('style');codeSheet.dataset.sinCodeStyles='1';doc.head.append(codeSheet);}
+  codeSheet.textContent=codeStyles;
+  if(!doc.querySelector('style[data-sin-theme]')||doc.documentElement.dataset.sinStyleMode!=='modern')setDocumentStyle(doc,'modern');
+}
+export function serialize(doc) {
+  const clone = doc.documentElement.cloneNode(true);
+  cleanOriginalImages(clone);
+  restoreDocumentMetadata(clone);
+  clone.querySelectorAll('table[data-sin-code-wrapper],table[data-sin-video-wrapper]').forEach(table=>{const cell=table.querySelector('td');if(cell)table.replaceWith(...cell.childNodes);});
+  clone.querySelectorAll('[data-sin-runtime]').forEach(el => el.remove());
+  clone.querySelectorAll('[data-sin-selected]').forEach(el => el.removeAttribute('data-sin-selected'));
+  clone.querySelectorAll('details[data-sin-code-display]').forEach(el=>el.removeAttribute('open'));
+  clone.querySelector('body').removeAttribute('contenteditable');
+  clone.querySelector('body').removeAttribute('spellcheck');
+  return '<!DOCTYPE html>\n' + clone.outerHTML;
+}
+export function renameImageFolder(html,oldName,newName) {
+  const input=parseHtml(html),root=documentRoot;let changed=false;
+  const base=new URL(input.querySelector('base[href]')?.getAttribute('href')||root,root);
+  for(const image of input.querySelectorAll('img[src]')){
+    const url=new URL(image.getAttribute('src'),base),parts=url.pathname.split('/');
+    if(!isDocumentUrl(url)||decodeURIComponent(parts[1]||'').toLowerCase()!==oldName.toLowerCase()||parts.length<3)continue;
+    const parents='../'.repeat(base.pathname.split('/').length-2);
+    image.setAttribute('src',parents+encodeURIComponent(newName)+'/'+parts.slice(2).join('/')+url.search+url.hash);changed=true;
+  }
+  return changed?serialize(input):html;
+}
+export async function loadImage(source) {
+  const image = new Image();
+  image.src = source;
+  await image.decode(); return image;
+}
+export async function toPng(source) {
+  if (!source.startsWith('data:') && !source.startsWith('blob:')) source = await request('read-image', {source});
+  const image = await loadImage(source);
+  const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+  if (!canvas.width || !canvas.height) throw Error('The image has no usable dimensions.');
+  canvas.getContext('2d').drawImage(image, 0, 0);
+  const data = canvas.toDataURL('image/png');
+  if (data === 'data:,') throw Error('The image is too large to render.');
+  return {data, width:canvas.width, height:canvas.height};
+}
+export async function portableHtml(html, base, duplicate=false, preserveReferences=false) {
+  const doc = parseHtml(html); ensureStyle(doc);
+  const actualBase = doc.querySelector('base[href]') ? new URL(doc.querySelector('base').getAttribute('href'), base).href : base;
+  const resolve = source => new URL(source, actualBase).href;
+  for (const img of doc.querySelectorAll('img')) {
+    const source = img.getAttribute('src');
+    if(preserveReferences&&img.dataset.sinStorage==='reference')continue;
+    const original=img.dataset.sinStorage==='reference'?await request('map-original-image',{source,base:doc.querySelector('base[href]')?.getAttribute('href')}):null;
+    if (source) img.setAttribute('src', (await toPng(original?.source||resolve(source))).data);
+    if(duplicate||img.dataset.sinStorage==='reference')img.dataset.sinStorage='inline';
+    img.removeAttribute('srcset');
+  }
+  // Prefer the now-embedded fallback image in picture elements.
+  doc.querySelectorAll('picture source').forEach(source => source.remove());
+  for (const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
+    const url = resolve(link.getAttribute('href'));
+    const response = await fetch(url); if (!response.ok) throw Error('Could not embed stylesheet: ' + url);
+    const style = doc.createElement('style'); style.textContent = await embedCss(await response.text(), url); link.replaceWith(style);
+  }
+  for (const style of doc.querySelectorAll('style')) style.textContent = await embedCss(style.textContent, actualBase);
+  for (const el of doc.querySelectorAll('[style]')) el.setAttribute('style', await embedCss(el.getAttribute('style'), actualBase));
+  doc.querySelectorAll('base').forEach(el => el.remove());
+  return serialize(doc);
+}
+async function embedCss(css, base) {
+  const matches = [...css.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)];
+  for (const match of matches) {
+    if (!match[2] || /^(data:|#)/i.test(match[2])) continue;
+    const png = await toPng(new URL(match[2], base).href);
+    css = css.replace(match[0], `url("${png.data}")`);
+  }
+  return css;
+}
+export function pasteSafeHtml(html) {
+  const doc = parseHtml(html);
+  doc.querySelectorAll('script,iframe,object,embed,link,meta,base').forEach(el => el.remove());
+  doc.querySelectorAll('*').forEach(el => [...el.attributes].forEach(a => { if (/^on/i.test(a.name) || /javascript:/i.test(a.value)) el.removeAttribute(a.name); }));
+  return doc.body.innerHTML;
+}

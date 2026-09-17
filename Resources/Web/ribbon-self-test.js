@@ -1,0 +1,197 @@
+import {request} from './bridge.js';
+
+// Word-style integration scenarios: real editable DOM, native undo and clipboard.
+export async function runRibbonTests(check) {
+  const saved=window.editor.html(),doc=()=>document.querySelector('#document').contentDocument;
+  const delay=()=>new Promise(resolve=>setTimeout(resolve,40));
+  const click=selector=>document.querySelector(selector).click();
+  function select(selector,start=null,end=start){
+    const block=doc().querySelector(selector),range=doc().createRange();range.selectNodeContents(block);
+    if(start!==null){const node=doc().createTreeWalker(block,NodeFilter.SHOW_TEXT).nextNode();range.setStart(node,start);range.setEnd(node,end);}
+    const selection=doc().getSelection();selection.removeAllRanges();selection.addRange(range);
+    doc().body.focus();doc().dispatchEvent(new Event('selectionchange'));
+  }
+  async function load(html='<p id="sample">Style reference sample</p><p id="after">Other paragraph</p>'){await window.editor.load(html);select('#sample',2);}
+  function style(id){click('.style-strip [data-style="'+id+'"]');}
+  try {
+    check(document.querySelector('#growFont svg')&&document.querySelector('#shrinkFont svg')&&document.querySelector('#fontColor svg'),'Font size and font color controls use drawn Office-style icons');
+    const editorButton=document.querySelector('#insertImage'),styles=document.querySelector('.styles-group');
+    check(editorButton.closest('.tools-group')?.previousElementSibling===styles,'Image Editor is grouped immediately to the right of Styles');
+    const toolbar=document.querySelector('#toolbar'),originalWidth=toolbar.style.width;
+    toolbar.style.width='1800px';await delay();const styleWidth=styles.getBoundingClientRect().width;
+    toolbar.style.width='2200px';await delay();
+    check(Math.abs(styles.getBoundingClientRect().width-styleWidth)<1&&styleWidth<650,'Styles stops growing after the five named presets');
+    const fontColor=document.querySelector('#fontColor'),glyph=fontColor.querySelector('.color-glyph svg').getBoundingClientRect(),bar=fontColor.querySelector('.color-sample').getBoundingClientRect(),arrow=document.querySelector('#fontColorOptions svg').getBoundingClientRect();
+    check(glyph.width===16&&glyph.height===16&&bar.width===16&&bar.height===4&&Math.abs(glyph.x-bar.x)<.5&&arrow.left>bar.right&&arrow.height===9,
+      'Font Color has a compact A centered over its color bar with a separate aligned chevron');
+    check(getComputedStyle(fontColor.querySelector('.color-sample')).backgroundColor==='rgb(255, 0, 0)','Font Color starts with the Word red indicator');
+    await request('test-capture',{name:'font-color-icon'});
+    window.editor.setToolbarWrap(false);toolbar.style.width='1500px';await delay();await delay();
+    const strip=document.querySelector('.style-strip');
+    check(strip.scrollWidth<=strip.clientWidth+1&&styles.parentElement.classList.contains('ribbon-groups')&&document.querySelector('.ribbon-overflow #link'),'Styles shows all five presets and sends Tools to overflow first');
+    check(document.querySelector('.ribbon-groups #insertImage')&&document.querySelector('.ribbon-overflow #link'),'Individual Tools buttons fill the remaining first-row space before later tools overflow');
+    await request('test-capture',{name:'individual-tool-overflow'});
+    window.editor.setToolbarWrap(true);await delay();await delay();
+    check(document.querySelector('#insertImage').getBoundingClientRect().top<document.querySelector('#link').getBoundingClientRect().top,'Wrapped ribbons keep the Tools buttons that fit on the first row and wrap only the remaining buttons');
+    window.editor.setToolbarWrap(false);
+    toolbar.style.width='1900px';await delay();await delay();
+    check(document.querySelector('.ribbon-groups #link')&&strip.scrollWidth<=strip.clientWidth+1&&document.querySelector('#moreRibbon').hidden,'A wide single-row ribbon uses its space instead of capping Styles at 190 pixels');
+    window.editor.setToolbarWrap(true);
+    toolbar.style.width=originalWidth;
+    check(!document.querySelector('.ribbon-actions,#source')&&document.querySelector('.numbering-split [data-cmd=insertOrderedList]')&&document.querySelector('.numbering-split #listNumbering svg'),'Numbering and its options share one split button; the View Source bar is removed');
+    check(document.querySelector('#link').closest('.tools-group')&&document.querySelector('#pasteCode svg'),'Link and Paste Code have large icons in the Tools section');
+    toolbar.style.width='480px';window.editor.setToolbarWrap(false);await delay();await delay();
+    const more=document.querySelector('#moreRibbon');
+    check(!more.hidden&&document.querySelector('.ribbon-overflow #link')&&document.querySelector('.ribbon-main').getBoundingClientRect().height<115,'Disabling wrapping keeps one compact ribbon row and moves remaining groups into overflow');
+    async function tapOverflow(){
+      const rect=more.getBoundingClientRect();
+      for(const type of ['mousePressed','mouseReleased'])await request('test-mouse',{parameters:{type,x:rect.x+rect.width/2,y:rect.y+rect.height/2,button:'left',clickCount:1}});
+      await delay();
+    }
+    await tapOverflow();check(document.querySelector('.ribbon-overflow:popover-open'),'A real mouse click opens ribbon overflow');
+    await tapOverflow();check(!document.querySelector('.ribbon-overflow:popover-open'),'A second real mouse click dismisses overflow without immediately reopening it');
+    await load();select('#sample');click('#moreRibbon');click('#fontColorOptions');await delay();
+    check(document.querySelector('.ribbon-overflow:popover-open .color-palette:popover-open'),'Color palette stays anchored inside the ribbon overflow');
+    click('.color-palette [data-color="#e97132"]');
+    check(doc().querySelector('#sample').innerHTML.includes('233, 113, 50'),'Overflow font controls retain the editor selection');
+    click('#moreStyles');await delay();check(document.querySelector('.ribbon-overflow:popover-open .styles-popup:popover-open'),'Styles popup works inside ribbon overflow');
+    click('.styles-popup [data-style=heading]');
+    check(doc().querySelector('#sample').dataset.sinStyle==='heading','An overflow style applies to the current paragraph');
+    window.editor.setToolbarWrap(true);toolbar.style.width=originalWidth;await delay();await delay();
+    check(more.hidden&&document.querySelector('.ribbon-groups #link')&&!document.querySelector('.ribbon-overflow:popover-open'),'Re-enabling wrapping restores the original controls and dismisses overflow');
+    await load();
+    const beforeLink=window.editor.html();
+    for(const address of ['', 'invalid address']){
+      click('#link');
+      document.querySelector('dialog [name=url]').value=address;
+      click('dialog button[value=ok]');
+      check(document.querySelector('dialog[open]')&&window.editor.html()===beforeLink,'Insert Link still validates an empty or invalid URL');
+      click('dialog button[value=cancel]');await delay();
+      check(!document.querySelector('dialog[open]')&&window.editor.html()===beforeLink,'Cancel dismisses Insert Link without validating or changing the document');
+    }
+    select('#sample',0,5);click('#link');
+    document.querySelector('dialog [name=urlOnly]').checked=true;document.querySelector('dialog [name=url]').value='https://example.invalid/reference';click('dialog button[value=ok]');await delay();
+    check(doc().querySelector('a')?.textContent==='Style'&&doc().querySelector('a').getAttribute('href')==='https://example.invalid/reference','Apply inserts a valid link at the saved selection');
+    await window.editor.load('');
+    let css=doc().defaultView.getComputedStyle(doc().querySelector('p'));
+    check(doc().documentElement.dataset.sinStyleMode==='modern'&&css.fontFamily.includes('Segoe UI')&&css.fontSize==='16px'&&css.lineHeight==='26.4px'&&css.marginBottom==='16px','New documents default to the reference Modern font, line spacing and paragraph spacing');
+    select('p');doc().execCommand('insertText',false,'Modern first paragraph');
+    await request('test-key',{parameters:{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'}});
+    await request('test-key',{parameters:{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13}});
+    doc().execCommand('insertText',false,'Modern second paragraph');
+    css=doc().defaultView.getComputedStyle(doc().body.lastElementChild);
+    check(doc().body.children.length===2&&css.marginBottom==='16px'&&css.lineHeight==='26.4px','Enter in a Modern document keeps its paragraph spacing');
+    window.editor.command('insertHTML','<ul><li>First bullet</li><li id="secondBullet">Second bullet</li></ul>');
+    css=doc().defaultView.getComputedStyle(doc().querySelector('#secondBullet'));
+    check(Math.abs(parseFloat(css.marginTop)-5.6)<.05&&css.lineHeight==='26.4px','Modern bullets use the reference item and line spacing');
+    select('p',2);style('heading');
+    const heading=doc().querySelector('p'),content=doc().body.textContent;
+    css=doc().defaultView.getComputedStyle(heading);
+    check(Math.abs(parseFloat(css.fontSize)-22*4/3)<.05&&css.fontWeight==='600'&&css.color==='rgb(31, 35, 40)'&&css.borderBottomWidth==='1px','Modern Heading uses 22 points with the reference color, weight and divider');
+    for(const [id,points] of [['title',34],['heading2',18],['heading',22]]){
+      style(id);await delay();
+      check(Math.abs(parseFloat(doc().defaultView.getComputedStyle(doc().querySelector('p')).fontSize)-points*4/3)<.05&&Number(document.querySelector('#fontSize').value)===points,'Modern '+id+' applies the requested point size and displays it in the font box');
+    }
+    check(document.querySelector('#fontSize').type==='number'&&!document.querySelector('#fontSize').hasAttribute('list'),'Font size retains numeric spin controls without the extra datalist arrow');
+    check(document.querySelector('#backColor svg path')&&!document.querySelector('#backColor').textContent.includes('▰'),'Highlight uses a recognizable marker icon instead of the block glyph');
+    const modern=window.editor.html();await window.editor.load(modern);
+    check(doc().documentElement.dataset.sinStyleMode==='modern'&&!document.querySelector('#documentStyle')&&doc().body.textContent===content&&doc().defaultView.getComputedStyle(doc().querySelector('p')).fontWeight==='600','Modern styling and toolbar choice survive HTML save and reload');
+    check([...document.querySelectorAll('.file-group [data-native-command]')].map(button=>button.dataset.nativeCommand).join(',')==='save,new,saveAs,close,saveAll,lock,unlock,rename'&&document.querySelector('.file-group [data-cmd=undo] svg')&&document.querySelector('.file-group [data-cmd=redo] svg'),'File ribbon contains file actions, Undo/Redo, Save All and Lock/Unlock/Rename icon stacks');
+    check(document.querySelector('.tools-group').contains(document.querySelector('#screenCapture')),'Screen Capture follows Image Editor on the main ribbon');
+    await load();
+    check(!document.querySelector('input[type=color]')&&document.querySelectorAll('.style-strip [data-style]').length===5,'Ribbon exposes five Modern paragraph styles and replaces native color inputs');
+    const fontCss=await request('editor-fonts');
+    for(const family of ['Aptos','Aptos Display'])if(fontCss.includes("font-family:'"+family+"'")){
+      const faces=await doc().fonts.load('16px "'+family+'"');
+      check(faces.length>0&&faces.every(face=>face.status==='loaded'),'The editor loads the actual local Office '+family+' font');
+    }
+    check(!window.editor.html().includes('sin-office-fonts.local'),'Saved HTML excludes the local Office font adapter');
+    const expected=[['normal','P',16,0,16,1.65,'rgb(31, 35, 40)','Segoe UI',400],['no-spacing','P',16,0,0,1,'rgb(31, 35, 40)','Segoe UI',400],['heading','P',88/3,0,(88/3)*.65,1.3,'rgb(31, 35, 40)','Segoe UI',600],['heading2','P',24,24*1.7,24*.65,1.3,'rgb(31, 35, 40)','Segoe UI',600],['title','P',136/3,0,(136/3)*.65,1.3,'rgb(31, 35, 40)','Segoe UI',600]];
+    for(const [id,tag,size,before,after,line,color,font,weight] of expected){
+      await load();select('#sample',0,5);style(id);
+      const block=doc().querySelector('#sample'),css=doc().defaultView.getComputedStyle(block),near=(a,b)=>Math.abs(parseFloat(a)-b)<.05;
+      check(block.tagName===tag&&block.dataset.sinStyle===id&&block.textContent==='Style reference sample'&&doc().querySelector('#after').textContent==='Other paragraph','Applying '+id+' to a selected word styles its entire paragraph without changing adjacent text');
+      check(near(css.fontSize,size)&&near(css.marginTop,before)&&near(css.marginBottom,after)&&near(css.lineHeight,size*line)&&css.color===color&&css.fontFamily.includes(font)&&css.fontWeight===String(weight),'Modern '+id+' font, color, point size, spacing and weight match the preset');
+      window.editor.command('undo');check(doc().querySelector('#sample')?.tagName==='P'&&!doc().querySelector('#sample')?.dataset.sinStyle,'Undo restores the paragraph before '+id);
+    }
+    await load();
+    for(const id of ['heading','title','heading2','no-spacing','normal']){style(id);check(doc().body.children.length===2&&doc().querySelector('#sample')?.dataset.sinStyle===id,'Changing an existing style to '+id+' preserves the paragraph structure');}
+    await window.editor.load('<p id="sample"><br></p><p id="after">Other paragraph</p>');
+    select('#sample');doc().getSelection().collapseToStart();doc().dispatchEvent(new Event('selectionchange'));style('title');
+    doc().execCommand('insertText',false,'New title');
+    check(doc().querySelector('#sample')?.textContent==='New title'&&doc().querySelector('#after').textContent==='Other paragraph','Applying Title on an empty line keeps typing in that line');
+    await load();
+    const unchanged=window.editor.html();
+    document.querySelector('[data-style=heading]').dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));
+    check(doc().querySelector('style[data-sin-style-preview]')&&window.editor.html()===unchanged,'Hover previews a style without changing saved HTML');
+    document.querySelector('.style-strip').dispatchEvent(new MouseEvent('mouseleave'));
+    check(!doc().querySelector('style[data-sin-style-preview]'),'Leaving the gallery removes the temporary preview');
+    style('heading');select('#sample');doc().getSelection().collapseToEnd();doc().dispatchEvent(new Event('selectionchange'));
+    await request('test-key',{parameters:{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r'}});
+    await request('test-key',{parameters:{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13}});
+    await delay();
+    const next=doc().querySelector('#sample').nextElementSibling;
+    check(next?.tagName==='P'&&next.dataset.sinStyle==='normal'&&next.textContent===''&&next.contains(doc().getSelection().anchorNode),'Enter after Heading creates Normal and keeps the caret on the new paragraph');
+    doc().execCommand('insertText',false,'Next paragraph');
+    check(next.textContent==='Next paragraph'&&parseFloat(doc().defaultView.getComputedStyle(next).fontSize)===16,'Typing after Heading uses Normal’s 12-point font');
+    await load();select('#sample');await delay();
+    check(document.querySelector('#backColor').value==='#ffff00'&&document.querySelector('#backColor').style.getPropertyValue('--picked-color')==='#ffff00','Highlight defaults to yellow and its toolbar indicator stays yellow on ordinary text');
+    click('#fontColorOptions');check(document.querySelectorAll('.color-palette > .palette-grid .swatch').length===70,'Office palette offers ten theme columns with shades and ten standard colors');
+    click('.color-palette [data-color="#e97132"]');
+    check(doc().querySelector('#sample').innerHTML.includes('233, 113, 50')&&!document.querySelector('.color-palette'),'Choosing a palette color formats the saved editor selection and closes the palette');
+    select('#after',2);await delay();
+    check(getComputedStyle(doc().querySelector('#after')).color!=='rgb(233, 113, 50)'&&getComputedStyle(fontColor.querySelector('.color-sample')).backgroundColor==='rgb(233, 113, 50)',
+      'Font Color retains the chosen indicator when the caret moves to differently colored text');
+    select('#after');click('#fontColor');
+    check(doc().querySelector('#after').innerHTML.includes('233, 113, 50')&&!document.querySelector('.color-palette'),'The left Font Color button applies its remembered color without opening a picker');
+    for(const control of ['highlightOptions','fontColorOptions']){
+      const before=window.editor.html();click('#'+control);await delay();
+      const frame=document.querySelector('#document').getBoundingClientRect();
+      for(const type of ['mousePressed','mouseReleased'])await request('test-mouse',{parameters:{type,x:frame.right-30,y:frame.top+30,button:'left',clickCount:1}});
+      await delay();
+      check(!document.querySelector('.color-palette')&&window.editor.html()===before,'Clicking the document dismisses '+control+' without changing the color or text');
+      click('#'+control);await delay();document.querySelector('#growFont').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+      check(!document.querySelector('.color-palette'),'Clicking outside in the ribbon dismisses '+control);
+    }
+    for(let i=0;i<12;i++)await request('color-used',{value:'#0101'+i.toString(16).padStart(2,'0')});
+    await request('color-used',{value:'#010105'});await request('color-used',{value:'transparent'});
+    click('#highlightOptions');await delay();await delay();
+    const recent=[...document.querySelectorAll('.recent-colors [data-color]')].map(button=>button.dataset.color);
+    check(recent.length===10&&new Set(recent).size===10&&recent[0]==='#010105'&&!recent.includes('#010100'),'All pickers share ten unique recent colors, moving reused colors first and excluding No Color');
+    click('.recent-colors [data-color="#010105"]');select('#sample');click('#fontColorOptions');await delay();await delay();
+    check(document.querySelector('.recent-colors [data-color]')?.dataset.color==='#010105','Font and highlight palettes share the same recent-color history');
+    document.querySelector('#growFont').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+    select('#sample');click('#highlightOptions');click('.color-palette [data-color="#ffff00"]');
+    select('#sample');click('#backColor');
+    check(doc().querySelector('#sample').innerHTML.includes('255, 255, 0')&&!document.querySelector('.color-palette'),'The left highlighter button applies the last color immediately without opening a palette');
+    const marker=[...doc().querySelectorAll('#sample span')].find(span=>span.style.backgroundColor==='rgb(255, 255, 0)');
+    check(marker&&doc().getSelection().isCollapsed&&doc().querySelector('#sample').contains(doc().getSelection().anchorNode),'Applying highlight deselects the text and leaves the caret in the highlighted paragraph');
+    await request('test-capture',{name:'selected-highlight'});
+    select('#sample');click('#highlightOptions');click('.color-palette [data-color="#92d050"]');
+    check(doc().querySelector('#sample').innerHTML.includes('146, 208, 80')&&doc().getSelection().isCollapsed&&document.querySelector('#backColor').value==='#92d050','The right highlighter arrow applies and remembers a different palette color, then deselects');
+    select('#after');click('#backColor');
+    check(doc().querySelector('#after').innerHTML.includes('146, 208, 80')&&!document.querySelector('.color-palette'),'The next left-button highlight reuses the chosen color');
+    window.editor.command('insertText',' caret');
+    check(doc().querySelector('#after').textContent==='Other paragraph caret','Typing after highlighting inserts at the collapsed caret instead of replacing the old selection');
+    select('#sample');click('#highlightOptions');click('.color-palette [data-color=transparent]');
+    check(!doc().querySelector('#sample').innerHTML.includes('146, 208, 80')&&doc().getSelection().isCollapsed,'No Color removes text highlighting and deselects');
+    await load();select('#sample');
+    document.querySelector('#fontSize').value='18';document.querySelector('#fontSize').dispatchEvent(new Event('change'));
+    await delay();click('#growFont');await delay();
+    check(doc().querySelector('#sample').innerHTML.includes('20pt'),'Grow font advances to the next Word point size');
+    click('#shrinkFont');await delay();check(doc().querySelector('#sample').innerHTML.includes('18pt'),'Shrink font returns to the previous Word point size');
+    select('#sample');click('#formatPainter');select('#after');doc().dispatchEvent(new PointerEvent('pointerup'));
+    check(doc().querySelector('#after').innerHTML.includes('24px')&&document.querySelector('#formatPainter').getAttribute('aria-pressed')==='false','Format Painter applies the source formatting and stops after one selection');
+    await load();select('#sample',5);
+    document.querySelector('#fontSize').value='23';document.querySelector('#fontSize').dispatchEvent(new Event('change'));
+    doc().execCommand('insertText',false,' inserted');
+    check(doc().querySelector('#sample').innerHTML.includes('23pt'),'Changing font size at the caret uses the requested points for subsequent typing');
+    await load('<p id="sample"><strong>Copy 中文 café</strong></p><p id="after">Destination</p>');select('#sample');
+    await window.editor.command('copy');const copied=await request('editor-paste');
+    check(copied.html.includes('Copy 中文 café')&&copied.html.includes('strong')&&!copied.html.includes('StartFragment:'),'Windows HTML clipboard preserves Unicode text and rich formatting');
+    select('#after');await window.editor.command('paste');
+    check(doc().body.lastElementChild.textContent==='Copy 中文 café','Ribbon paste inserts Windows HTML at the saved selection');
+    select('body > :last-child');await window.editor.command('cut');check(doc().body.lastElementChild.textContent==='','Cut removes text after copying it');
+    window.editor.command('undo');check(doc().body.lastElementChild.textContent==='Copy 中文 café','Native undo restores cut text');
+  } finally {await window.editor.load(saved);}
+}

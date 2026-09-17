@@ -1,0 +1,270 @@
+import {send,request,native,blobData,escapeHtml,ask,report} from './bridge.js';
+import {parseHtml,ensureStyle,editingStyles,serialize,toPng,portableHtml,pasteSafeHtml,renameImageFolder} from './document.js';
+import {renameImageFile} from './asset-references.js';
+import {createDocumentSearch} from './document-search.js';
+import {createDocumentOutline} from './document-outline.js';
+import {createDocumentAccess} from './document-access.js';
+import {attachListNumbering,toggleNumbering} from './list-numbering.js';
+import {createImageSelection} from './image-selection.js';
+import {createImageInsertion} from './image-insertion.js';
+import {createImageActions} from './image-actions.js';
+import {pasteMarkdown,looksLikeMarkdown,htmlToMarkdown} from './markdown.js';
+import {editCodeBlock} from './code-blocks.js';
+import {insertLink} from './link-insertion.js';
+import {createYouTubePlayer,pasteYouTube,editVideoAtoms} from './youtube.js';
+import {createVideoSelection} from './video-selection.js';
+import {annotate} from './annotation-ui.js';
+import {id,outputBounds} from './annotation-model.js';
+import {createRibbon} from './ribbon.js';
+import {clipboardCommand} from './editor-clipboard.js';
+import {attachFileDrop} from './file-drop.js';
+import {observeEditorChrome} from './editor-chrome.js';
+import {prepareOriginalImages,observeOriginalImages} from './original-images.js';
+import {documentRoot,platformShortcuts,isMac,macNative} from './platform.js';
+import {isolateDocument} from './document-isolation.js';
+import {insertAtom} from './webkit-atoms.js';
+
+const frame=document.querySelector('#document'),$=s=>document.querySelector(s);
+// WebKit suppresses parent-owned DOM listeners in a no-scripts sandbox. CSP
+// blocks all document scripts while preserving the trusted parent's handlers.
+if(macNative)frame.sandbox.add('allow-scripts');
+let doc=null,selection=null,currentRaw='',base=documentRoot,loading=Promise.resolve(),loadingNow=false;
+let changeTimer,lastImageStatus="",loadRevision=0;
+function imageStatus(source=""){if(source!==lastImageStatus){lastImageStatus=source;send('image-status',{source});}}
+const exports=new Map();
+const search=createDocumentSearch(()=>doc,changed);
+const images=createImageSelection(frame,changed,image=>imageStatus(image?.getAttribute('src')||''));
+const imageActions=createImageActions(frame,{edit:openAnnotation,resize:()=>images.resize(),remove:target=>{const range=doc.createRange();range.selectNode(target);selection=range;command('delete');images.select(null);}});
+const videos=createYouTubePlayer(frame,target=>videoSelection.select(target));
+const videoSelection=createVideoSelection(frame,{changed,command,saveSelection,stopPlayback:videos.close,clearImage:()=>{images.select(null);imageActions.close();}});
+const ribbon=createRibbon($('#toolbar'),{getDocument:()=>doc,saveSelection,restoreSelection,command,changed});
+platformShortcuts($('#toolbar'));
+const initialChrome=new URLSearchParams(location.search);
+$('#toolbar').hidden=initialChrome.get('toolbar')==='false';
+ribbon.setWrap(initialChrome.get('wrap')!=='false');
+const access=createDocumentAccess($('#toolbar'),()=>doc);
+const imageInsertion=createImageInsertion({saveSelection,command,ready:()=>loading,getDocument:()=>doc});
+const {insertImage,storageChoice,storeImage}=imageInsertion;
+observeEditorChrome($('#toolbar'));attachFileDrop(document);
+// Paint the ribbon before waiting for the native font catalog on a first visit.
+const fontCss=native?await request('editor-fonts'):'';
+if(fontCss){const style=document.createElement('style');style.textContent=fontCss;document.head.append(style);}
+function saveSelection(){if(!doc)return;const s=doc.getSelection();if(s.rangeCount && doc.body.contains(s.anchorNode))selection=s.getRangeAt(0).cloneRange();}
+function restoreSelection(){if(!doc)return;doc.body.focus();const s=doc.getSelection();if(selection&&doc.body.contains(selection.startContainer)){s.removeAllRanges();s.addRange(selection);}else {const range=doc.createRange();range.selectNodeContents(doc.body);range.collapse(false);s.removeAllRanges();s.addRange(range);}}
+async function focus(){
+  await loading;
+  if(!doc||!document.hasFocus()||document.fullscreenElement||document.activeElement?.matches('input,select,button')||document.querySelector('dialog[open]'))return;
+  if(!selection&&!currentRaw.trim()){
+    selection=doc.createRange();selection.selectNodeContents(doc.body.querySelector('p,h1,h2,h3,h4,h5,h6')||doc.body);selection.collapse(true);
+  }
+  restoreSelection();saveSelection();syncFormatting();
+}
+function changed(){
+  if(!doc||loadingNow)return;search.invalidate();saveSelection();clearTimeout(changeTimer);
+  // Keep full-document serialization and native synchronization out of keystrokes.
+  changeTimer=setTimeout(()=>{currentRaw=serialize(doc);send('change',{html:currentRaw});},150);
+}
+function html(flush=false){if(flush)clearTimeout(changeTimer);return loadingNow?currentRaw:doc?serialize(doc):currentRaw;}
+function captureView(){
+  if(!doc)return {selectionStart:0,selectionLength:0,scroll:0};
+  const selected=doc.getSelection(),range=selected?.rangeCount?selected.getRangeAt(0):selection;
+  if(!range||!doc.body.contains(range.startContainer))return {selectionStart:0,selectionLength:0,scroll:doc.defaultView.scrollY};
+  const prefix=doc.createRange();prefix.selectNodeContents(doc.body);prefix.setEnd(range.startContainer,range.startOffset);
+  return {selectionStart:prefix.toString().length,selectionLength:range.toString().length,scroll:doc.defaultView.scrollY};
+}
+async function restoreView(state={}){
+  await loading;if(!doc)return;
+  const start=Math.max(0,Number(state.selectionStart)||0),end=start+Math.max(0,Number(state.selectionLength)||0);
+  const walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT),range=doc.createRange();
+  let node,offset=0,found=false,ended=false;
+  while((node=walker.nextNode())){
+    if(!found&&start<=offset+node.length){range.setStart(node,Math.max(0,start-offset));found=true;}
+    if(found&&end<=offset+node.length){range.setEnd(node,Math.max(0,end-offset));ended=true;break;}
+    offset+=node.length;
+  }
+  if(!found){range.selectNodeContents(doc.body);range.collapse(false);}
+  else if(!ended)range.setEnd(doc.body,doc.body.childNodes.length);
+  selection=range;const selected=doc.getSelection();selected.removeAllRanges();selected.addRange(range);
+  doc.defaultView.scrollTo(0,Math.max(0,Number(state.scroll)||0));syncFormatting();
+}
+async function load(raw,newBase=base){
+  const revision=++loadRevision;
+  search.invalidate();
+  clearTimeout(changeTimer);
+  videos.close();videoSelection.select(null);imageActions.close();images.select(null);imageStatus();currentRaw=raw||'';base=newBase;loadingNow=true;selection=null;
+  const input=parseHtml(raw);ensureStyle(input);
+  const baseTag=input.createElement('base');baseTag.href=base;baseTag.dataset.sinRuntime='1';
+  // An explicit document base wins. Otherwise resolve its relative assets against the HTML folder.
+  if(!input.querySelector('base[href]'))input.head.prepend(baseTag);
+  const style=input.createElement('style');style.dataset.sinRuntime='1';style.textContent=fontCss+editingStyles;input.head.append(style);
+  if(macNative)isolateDocument(input);
+  loading=prepareOriginalImages(input).then(()=>{if(revision!==loadRevision)return;return new Promise(resolve=>{frame.onload=()=>{
+    doc=frame.contentDocument;doc.body.contentEditable='true';doc.body.spellcheck=true;loadingNow=false;
+    ribbon.attach(doc);
+    attachFileDrop(doc);access.attach(doc);
+    attachListNumbering(doc);
+    images.attach(doc);
+    observeOriginalImages(doc);
+    videoSelection.attach(doc);
+    videos.attach(doc);
+    doc.addEventListener('selectionchange',()=>{saveSelection();syncFormatting();});doc.addEventListener('input',changed);
+    doc.addEventListener('click',event=>{if(event.target.closest('a'))event.preventDefault();const image=event.target.closest('img');selectImage(image);imageActions.open(image,event);});
+    doc.addEventListener('dblclick',event=>{const image=event.target.closest('img'),code=event.target.closest('pre[data-sin-code]')||event.target.closest('details[data-sin-code-display]')?.querySelector('pre[data-sin-code]');if(image){selectImage(image);openAnnotation(image).catch(report);}else if(code)pasteCode(code).catch(report);});
+    doc.addEventListener('pointerover',event=>imageStatus(event.target.closest('img')?.getAttribute('src')||images.selected?.getAttribute('src')||''));
+    doc.addEventListener('pointerout',event=>{if(event.target.closest('img'))imageStatus(images.selected?.getAttribute('src')||'');});
+    doc.addEventListener('keydown',shortcuts);doc.addEventListener('paste',paste);
+    doc.addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault();});
+    doc.addEventListener('drop',event=>{const files=[...event.dataTransfer.files].filter(f=>f.type.startsWith('image/'));if(files.length){event.preventDefault();(async()=>{for(const f of files)await insertImage(await blobData(f));})().catch(report);}});
+    resolve();
+    requestAnimationFrame(()=>requestAnimationFrame(()=>send('painted')));
+  };frame.srcdoc='<!DOCTYPE html>'+input.documentElement.outerHTML;});});
+  return loading;
+}
+async function setBase(newBase){
+  saveSelection();
+  const path=node=>{const indexes=[];while(node&&node!==doc.body){indexes.unshift([...node.parentNode.childNodes].indexOf(node));node=node.parentNode;}return indexes;};
+  const saved=selection?{start:path(selection.startContainer),end:path(selection.endContainer),startOffset:selection.startOffset,endOffset:selection.endOffset}:null;
+  const scroll={x:doc.defaultView.scrollX,y:doc.defaultView.scrollY};
+  // Both native hosts apply changed folder mappings to newly loaded documents.
+  // Reload only the sandboxed document, keeping the pending paste and its caret.
+  await load(html(),newBase);
+  if(saved){const node=indexes=>indexes.reduce((parent,index)=>parent.childNodes[index],doc.body);selection=doc.createRange();selection.setStart(node(saved.start),saved.startOffset);selection.setEnd(node(saved.end),saved.endOffset);}
+  restoreSelection();doc.defaultView.scrollTo(scroll.x,scroll.y);
+}
+function command(name,value=null){
+  // AppKit menu key equivalents arrive here even while a modal owns focus.
+  // Route them to that modal so Copy/Paste/Undo never edit the document behind it.
+  const modal=[...document.querySelectorAll('dialog[open]')].at(-1);
+  if(modal){
+    const input=document.activeElement;
+    if(modal.contains(input)&&input.matches('input,textarea')){
+      if(name==='selectAll'){input.select();return;}
+      if(native&&['copy','cut','paste'].includes(name))return (async()=>{
+        const start=input.selectionStart,end=input.selectionEnd;
+        if(start==null||end==null){document.execCommand(name);return;}
+        if(name==='paste'){
+          const copied=await request('editor-paste');
+          if(!input.isConnected)return;
+          input.focus();input.setSelectionRange(start,end);document.execCommand('insertText',false,copied?.text??copied?.markdown??'');
+        }else{
+          const text=input.value.slice(start,end);if(!text)return;
+          await request('editor-copy',{html:escapeHtml(text),text});
+          if(name==='cut'&&input.isConnected){input.focus();input.setSelectionRange(start,end);document.execCommand('delete');}
+        }
+      })().catch(report);
+      document.execCommand(name,false,value);return;
+    }
+    if(modal.matches('.annotation')){
+      if(name==='selectAll')modal.dispatchEvent(new KeyboardEvent('keydown',{key:'a',metaKey:true,bubbles:true,cancelable:true}));
+      else if(['undo','redo','copy','paste','delete'].includes(name))modal.querySelector(`[data-action="${name}"]`)?.click();
+    }
+    return;
+  }
+  if(!doc||access.locked&&!['copy','selectAll'].includes(name))return;restoreSelection();
+  if(['cut','copy','paste'].includes(name))return clipboardCommand(doc,name,{changed,insertImage}).catch(report);
+  doc.execCommand('styleWithCSS',false,true);
+  if(name==='insertOrderedList')toggleNumbering(doc);
+  else if(isMac&&name==='insertHTML'&&/data-sin-youtube\s*=/.test(value))insertAtom(doc,value,'video');
+  else if(['delete','insertHTML','insertText'].includes(name))editVideoAtoms(doc,()=>doc.execCommand(name,false,value));
+  else doc.execCommand(name,false,value);
+  changed();syncFormatting();
+}
+function syncFormatting(){ribbon.sync();}
+function selectImage(image){images.select(image);}
+async function paste(event){
+  if(native&&event.isTrusted){event.preventDefault();await clipboardCommand(doc,'paste',{changed,insertImage}).catch(report);return;}
+  const files=[...event.clipboardData.files],text=event.clipboardData.getData('text/plain');
+  if(pasteYouTube(doc,text,changed)){event.preventDefault();return;}
+  if(files.some(file=>/\.(md|markdown)$/i.test(file.name))){event.preventDefault();await clipboardCommand(doc,'paste',{changed,insertImage}).catch(report);return;}
+  if(!doc.body.textContent.trim()&&!doc.body.querySelector('img,pre,table')&&looksLikeMarkdown(text)){
+    event.preventDefault();try{await pasteMarkdown(doc,text,changed);ribbon.attach(doc);}catch(error){report(error);}return;
+  }
+  const images=[...event.clipboardData.items].filter(i=>i.type.startsWith('image/')).map(i=>i.getAsFile());
+  if(images.length){event.preventDefault();saveSelection();try{for(const image of images)await insertImage(await blobData(image));}catch(e){report(e);}return;}
+  const markup=event.clipboardData.getData('text/html');
+  if(markup){event.preventDefault();command('insertHTML',pasteSafeHtml(markup));}
+}
+function pasteCode(existing=null){return editCodeBlock(existing,{getDocument:()=>doc,saveSelection,restoreSelection,command});}
+async function openAnnotation(image=null,capturedSource=null){
+  if(access.locked)return;
+  imageActions.close();
+  saveSelection();let mode=image?.dataset.sinStorage||(image?(/^data:/.test(image.getAttribute('src'))?'inline':'separate'):null);
+  if(mode==='reference')mode=null;
+  let state;
+  // A broken image's small error placeholder is not its intended display size.
+  const displayWidth=image?(image.naturalWidth?image.getBoundingClientRect().width:0):800;
+  if(image?.dataset.sinAnnotation){state=JSON.parse(image.dataset.sinAnnotation);}
+  else if(image||capturedSource){const png=await toPng(capturedSource||image.currentSrc||image.src);state={version:1,width:png.width,height:png.height,background:'none',objects:[{id:id(),type:'embedded-image',name:capturedSource?'Screen Capture':'Original Image',source:png.data,x:0,y:0,width:png.width,height:png.height,isOriginalImage:true,visible:true}]};}
+  else {state={version:1,width:800,height:500,blankCanvas:true,background:'none',objects:[]};}
+  const result=await annotate(state,{crop:!!capturedSource});if(!result)return;
+  if(!mode)mode=await storageChoice();if(!mode)return;
+  const imageIndex=image?[...doc.images].indexOf(image):-1;
+  const source=await storeImage(result.data,mode);
+  if(imageIndex>=0)image=doc.images[imageIndex];
+  // PMT retains the document width and fits the expanded annotation bounds into it.
+  const width=Math.max(1,Math.round(displayWidth||state.width));
+  const markup=`<img src="${escapeHtml(source)}" data-sin-storage="${mode}" data-sin-annotation="${escapeHtml(JSON.stringify(result.state))}" style="width:${width}px;max-width:100%;height:auto" alt="${escapeHtml(image?.alt||'Annotated image')}">`;
+  if(image){restoreSelection();const r=doc.createRange();r.selectNode(image);selection=r;}
+  command('insertHTML',markup+(image?'':'<p><br></p>'));selectImage(null);
+}
+function shortcuts(event){
+  const ctrl=event.ctrlKey||event.metaKey,key=event.key.toLowerCase();let action=null;
+  if(native&&ctrl&&!event.shiftKey&&['c','x'].includes(key)){event.preventDefault();saveSelection();command(key==='c'?'copy':'cut');return;}
+  if(isMac&&event.metaKey&&key==='z'){event.preventDefault();command(event.shiftKey?'redo':'undo');return;}
+  if(ctrl){const map={s:event.altKey?'saveAll':event.shiftKey?'saveAs':'save',n:'new',t:'new',o:'open',w:'close',f:'find',h:'replace',d:'longDate',l:'separator',tab:event.shiftKey?'previous':'next','+':'zoomIn','=':'zoomIn','-':'zoomOut','0':'zoomReset'};action=map[key];if(key==='l'&&event.shiftKey)action='documentList';if(key==='u'&&event.shiftKey){event.preventDefault();send('source');return;}}
+  if(isMac&&event.metaKey){
+    if(key==='h')return; // macOS owns Command-H (Hide); Replace uses Option-Command-F.
+    if(key==='f'&&event.altKey)action='replace';
+    if(key==='g')action=event.shiftKey?'findPrevious':'findNext';
+    if(event.shiftKey&&[']','['].includes(key))action=key===']'?'next':'previous';
+  }
+  if(event.key==='F5')action='date';
+  if(event.key==='F3')action=event.shiftKey?'findPrevious':'findNext';
+  if(action){event.preventDefault();changed();send('command',{command:action,html:html()});}
+}
+$('#pasteCode').onclick=()=>pasteCode().catch(report);
+$('#insertImage').onclick=()=>openAnnotation(images.selected?.isConnected?images.selected:null).catch(report);
+$('#screenCapture').onclick=async()=>{
+  saveSelection();$('#screenCapture').disabled=true;
+  try{const source=await request('screen-capture');if(source)await openAnnotation(null,source);}
+  catch(error){report(error);}
+  finally{$('#screenCapture').disabled=false;}
+};
+$('#toolbar').addEventListener('click',event=>{
+  const action=event.target.closest('[data-native-command]')?.dataset.nativeCommand;
+  if(action)send('command',{command:action,html:html(true)});
+});
+$('#regionCapture').onclick=async()=>{
+  saveSelection();$('#regionCapture').disabled=true;
+  try{const capture=await request('region-capture');if(capture)await insertImage(capture.source,capture.storage);}
+  catch(error){report(error);}
+  finally{$('#regionCapture').disabled=false;}
+};
+$('#link').onclick=()=>insertLink({getDocument:()=>doc,saveSelection,command}).catch(report);
+$('#notice').onclick=()=>$('#notice').hidden=true;
+window.editor={load,html,setBase,focus,command,captureView,restoreView,insertImage,openAnnotation,pasteCode,renameImageFolder,setImageStorage:imageInsertion.setStorage,ready:()=>loading,
+  stopMedia:videos.close,setToolbarWrap:ribbon.setWrap,
+  setReadOnly:value=>{access.set(value);images.select(null);imageActions.close();videoSelection.select(null);},
+  outline:createDocumentOutline(()=>doc),
+  setNavigationInset:width=>{frame.style.marginLeft=width+'px';frame.style.width=`calc(100% - ${width}px)`;},
+  renameImageFile,
+  async renameOpenImageFile(documentUrl,oldUrl,newUrl){await loading;const updated=renameImageFile(html(true),documentUrl,oldUrl,newUrl);await load(updated);return updated;},
+  search:options=>search.run(options),
+  beginMarkdown(folder=null){const key=id();(async()=>{await loading;return await htmlToMarkdown(doc,async png=>{const path=await request('save-image-as',{data:png});return folder?new URL(path,folder).href:path;});})().then(html=>exports.set(key,{html})).catch(error=>exports.set(key,{error:error.message}));return key;},
+  renameOpenImageFolder(oldName,newName){const updated=renameImageFolder(html(true),oldName,newName);load(updated);return updated;},
+  beginPortable(duplicate=false){const key=id();(async()=>{await loading;return await portableHtml(html(),base,duplicate);})().then(html=>exports.set(key,{html})).catch(error=>exports.set(key,{error:error.message}));return key;},
+  beginRelocate(){
+    const key=id();
+    (async()=>{
+      await loading;const original=parseHtml(html()),output=parseHtml(await portableHtml(html(),base,false,true));
+      const images=[...output.querySelectorAll('img')];
+      for(const [index,img] of [...original.querySelectorAll('img')].entries())
+        if(img.dataset.sinStorage==='reference')images[index].setAttribute('src',await request('relocate-original-image',{source:img.getAttribute('src'),base:original.querySelector('base[href]')?.getAttribute('href')}));
+        else if(img.dataset.sinStorage==='separate'||!/^data:/i.test(img.getAttribute('src')||''))
+          images[index].setAttribute('src',await request('save-image-as',{data:images[index].getAttribute('src')}));
+      return serialize(output);
+    })().then(html=>exports.set(key,{html})).catch(error=>exports.set(key,{error:error.message}));return key;
+  },
+  exportResult(key){const value=exports.get(key);if(value)exports.delete(key);return value||null;}
+};
+send('ready');if(!native)await load('');

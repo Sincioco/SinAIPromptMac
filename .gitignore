@@ -1,0 +1,13 @@
+.DS_Store
+build/
+work/
+*.xcuserstate
+xcuserdata/
+Tests/last-*-results.json
+*.log
+*.dSYM/
+data-location.json
+settings.json
+session.json
+templates.json
+*.bak
