@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "${0:A:h}"
 ./build.sh
+./scripts/test-signing.sh
 TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sinaiprompt-native-tests.XXXXXX")
 trap 'rm -rf "$TEST_DIR"' EXIT
 xcrun clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation -ISources Sources/SINDocument.m Sources/SINStore.m Tests/StoreTests.m -o "$TEST_DIR/store-tests"

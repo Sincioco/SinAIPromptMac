@@ -17,6 +17,15 @@ Region selection uses a frozen, undimmed desktop across all displays and a pixel
 
 Window selection uses Apple's native window picker, which highlights the chosen window. This replaces the Windows monitor/application thumbnail gallery. macOS controls Screen Recording permission, requested only after the user chooses a capture action. The main window is restored after completion or cancellation.
 
+The build signs the app with an existing keychain identity instead of an ad-hoc
+code hash, preserving its designated requirement across changed builds. This is
+how macOS recognizes previously authorized code. A transition from older ad-hoc
+builds may require one fresh approval. The app does not reset the privacy database
+or cache permission as an application preference; it checks the current OS grant
+before requesting access. `scripts/test-signing.sh` verifies mutual requirement
+compatibility after a signed bundle's contents change without requesting capture
+permission. Live grant persistence remains an OS-level acceptance check.
+
 Remaining platform differences: Apple's interactive window picker does not include the cursor; use Capture's region mode with Include Cursor to include it. The Windows system mouse-speed adjustment is replaced with per-pixel arrow-key positioning and adjustable magnification, without changing system mouse settings. Live Windows thumbnail tiles are replaced by the native highlighted-window picker and named display choices. Actual OS permission prompts, multi-monitor overlays with mixed DPI, cursor placement and global focus restoration need manual checks on the intended Mac configuration.
 
 Run the local native service checks with:

@@ -17,9 +17,19 @@ open "build/Sin AI Prompt.app"
 
 Or double-click `Build.command` to build and open the application. The app bundle
 is self-contained and uses macOS frameworks. You can copy it to Applications.
-Local builds are ad-hoc signed; this repository does not include an Apple Developer
-certificate or notarization. Building uses `xcrun clang`, `sips`, `iconutil` and
-`codesign` supplied by Apple. No dependency installer is run.
+Local builds use an existing code-signing identity in your Mac's keychain so
+macOS can recognize the app after a rebuild. The build automatically uses the
+identity when exactly one valid identity is available. If there are several, set
+`SIN_CODE_SIGN_IDENTITY` to its name or SHA-1 from
+`security find-identity -v -p codesigning`. Keep using the same identity.
+Certificates and private keys are never created, imported or stored in this
+repository. Builds are not notarized. Building uses `xcrun clang`, `sips`,
+`iconutil`, `security` and `codesign` supplied by Apple, with no network signing
+step or dependency installer.
+
+For a disposable build without a certificate, `SIN_CODE_SIGN_IDENTITY=- ./build.sh`
+explicitly selects ad-hoc signing. Such builds cannot retain privacy permission
+reliably when their contents change; the signing regression check rejects them.
 
 Run `./scripts/package.sh` to build `build/SinAIPromptMac.zip` for copying to
 another Mac with the same processor architecture. The deployment target is
@@ -85,6 +95,12 @@ The first capture needs macOS **Screen & System Audio Recording** permission;
 allow access in System Settings when you choose to use this feature. The native
 window picker replaces Windows' live window-thumbnail gallery.
 
+If you used an earlier ad-hoc build, macOS may require one new approval after
+switching to the certificate-signed build. Subsequent builds retain the same
+code-signing identity. This fixes rebuild-related permission loss; permission
+remains controlled by macOS. See [Apple's explanation of code identity and privacy
+permissions](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements).
+
 Image, text, Markdown and PDF previews stay outside the open document collection.
 PDFKit supplies the offline PDF viewer. Finder replaces Explorer; Trash replaces
 the Recycle Bin. Image rename updates its parent document references; unsafe
@@ -129,7 +145,8 @@ folder for autosaving new documents, startup restoration and save-on-close.
 ./test.sh
 ```
 
-This builds the app, runs native persistence, service and unused-image scanner
+This builds the app, verifies that a changed signed bundle retains its designated
+requirement, runs native persistence, service and unused-image scanner
 checks, parses the JavaScript with Apple's installed JavaScriptCore, then runs
 editor and native shell checks in the real WKWebView using an isolated temporary
 profile. The latest integrated run passed 199 checks; the
