@@ -25,10 +25,12 @@ static NSError *FileActionError(NSString *message) { return [NSError errorWithDo
             else { self.saving = NO; [self showError:error]; if (completion) completion(NO); }
             return;
         }
+        void(^chooseDestination)(NSString *,NSString *)=^(NSString *suggestedName,NSString *automaticPath){
+        if(automaticPath&&!saveAs){NSError *error=nil;if([document saveToPath:automaticPath overwriteConflict:NO error:&error])[self finishSavingDocument:document editor:editor completion:completion];else {self.saving=NO;[self showError:error];if(completion)completion(NO);}return;}
         NSSavePanel *panel = NSSavePanel.savePanel;
         panel.allowedContentTypes = @[UTTypeHTML]; panel.canCreateDirectories = YES;
         panel.title = saveAs ? @"Save HTML As" : @"Save HTML";
-        panel.nameFieldStringValue = document.path || document.name.pathExtension.length ? document.name : [document.name stringByAppendingPathExtension:@"html"];
+        panel.nameFieldStringValue = suggestedName ?: (document.path || document.name.pathExtension.length ? document.name : [document.name stringByAppendingPathExtension:@"html"]);
         if (document.path) panel.directoryURL = [NSURL fileURLWithPath:document.path.stringByDeletingLastPathComponent isDirectory:YES];
         [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
             if (response != NSModalResponseOK) { self.saving = NO; if (completion) completion(NO); return; }
@@ -44,11 +46,14 @@ static NSError *FileActionError(NSString *message) { return [NSError errorWithDo
             if ([document saveAsToPath:path replaceExisting:YES error:&error]) [self finishSavingDocument:document editor:editor completion:completion];
             else { self.saving = NO; [self showError:error]; if (completion) completion(NO); }
         }];
+        };
+        if(!document.path)[self resolveFirstSave:document completion:chooseDestination];else chooseDestination(nil,nil);
     };
     if (editor) [editor flush:save]; else save();
 }
 - (void)finishSavingDocument:(SINDocument *)document editor:(SINEditor *)editor completion:(void (^)(BOOL))completion {
     NSString *previousPath = editor.services.documentPath;
+    [self.store rememberDocumentEmoji:document oldPath:previousPath];
     [self.store addRecentPath:document.path];
     editor.services.documentPath = document.path;
     void (^finish)(void) = ^{ self.saving = NO; [self refresh]; [self persist]; if (completion) completion(YES); };
@@ -200,12 +205,13 @@ static NSError *FileActionError(NSString *message) { return [NSError errorWithDo
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         if (response != NSAlertFirstButtonReturn) return;
         NSString *name = field.stringValue;
-        if (document.path && ![name.pathExtension isEqualToString:document.path.pathExtension]) name = [name stringByAppendingPathExtension:document.path.pathExtension];
+        if (!name.pathExtension.length) name = [name stringByAppendingPathExtension:@"html"];
         self.saving = YES;
         SINEditor *editor = self.editors[document.identifier];
         void (^rename)(void) = ^{
             NSError *error = nil; NSString *oldPath = document.path;
             if ([document renameToFilename:name error:&error]) {
+                [self.store rememberDocumentEmoji:document oldPath:oldPath];
                 if (oldPath) {
                     NSMutableArray *recent = [self.store.settings[@"recent"] mutableCopy]; [recent removeObject:oldPath]; self.store.settings[@"recent"] = recent ?: @[];
                     [self.store addRecentPath:document.path];

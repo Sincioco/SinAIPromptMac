@@ -1,7 +1,11 @@
 #import "SINWindowController.h"
+#import "SINProjectSession.h"
 
 @implementation SINWindowController (ContextMenus)
 - (NSMenu *)documentContextMenu:(SINDocument *)document {
+    return [self documentContextMenu:document documentList:NO];
+}
+- (NSMenu *)documentContextMenu:(SINDocument *)document documentList:(BOOL)documentList {
     NSMenu *menu=NSMenu.new;menu.autoenablesItems=NO;
     if(!document||![self.documents containsObject:document])return menu;
     BOOL hasPath=document.path.length>0,isDirectory=NO;
@@ -17,8 +21,13 @@
     add(@"Rename…",@"rename",NO,hasPath);
     add(@"Duplicate",@"duplicate",NO,NO);
     add(document.pinned?@"Unpin":@"Pin To Top",@"pin",NO,NO);
+    add(@"Private",@"private",NO,NO);menu.itemArray.lastObject.state=document.privateDocument?NSControlStateValueOn:NSControlStateValueOff;
+    add(@"Choose Emoji…",@"emoji",NO,NO);
     add(document.readOnly?@"Unlock Document":@"Lock Document",document.readOnly?@"unlock":@"lock",NO,NO);
-    add(@"Delete…",@"trash",YES,YES);
+    NSArray *checked=[self.navigator selectionIncludingItem:document];if(checked.count>1)add(@"Combine Selected Documents…",@"combineSelection",NO,NO);
+    BOOL multiple=documentList&&[self.navigator isItemChecked:document];NSArray *selection=multiple?checked:@[document];
+    [menu addItem:[self projectMenuForItems:selection]];
+    add(multiple?@"Delete Selected Files…":@"Delete…",multiple?@"deleteSelection":@"trash",NO,!multiple&&hasPath);
     [menu addItem:NSMenuItem.separatorItem];
     add(@"Copy Full Path",@"copyPath",YES,NO);
     add(@"Copy for AI Use",@"copyAI",NO,NO);

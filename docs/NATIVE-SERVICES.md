@@ -7,6 +7,8 @@ The bridge shares the original editor's message shapes. The shell supplies each 
 - Images are normalized to PNG by ImageIO. Separate files are stored in the HTML file's sibling folder with the same stem. SHA-256 content deduplication preserves filenames after a user renames an existing image.
 - Original images remain ordinary relative or `file:` references in saved HTML. `sin-asset://original/` display addresses encode the whole absolute path once. Use `localPathForSource:base:error:` when handling these requests to preserve percent signs and Unicode filenames.
 - Native clipboard writes HTML and Unicode text. Private document fragments preserve image references within the same document; portable HTML crosses document boundaries. Reads also accept RTF, Markdown files, image files, PNG, TIFF and SVG. Annotation copy keeps editable JSON objects alongside the selected SVG or PNG representation.
+- Paste as Text requests only literal Unicode text. Document-image copy publishes PNG and TIFF; annotation PNG/SVG copy also retains editable layer metadata.
+- Slice export chooses a folder once, creates a fresh named output directory, validates each PNG with ImageIO and publishes cells sequentially without replacing existing files. An anchored directory descriptor prevents path replacement from redirecting a batch. Progress and cancellation retain completed cells; a failed or stale request does not overwrite another file.
 - Templates and the ten most recent colors persist in JSON under the app's data directory.
 - Link and YouTube metadata is fetched only on explicit insertion/paste requests. Requests use ephemeral URLSession instances, bounded data sizes and timeouts. No font downloads or telemetry are performed.
 - External images open in the user's default macOS viewer; videos open in the default browser.
@@ -33,9 +35,9 @@ Run the local native service checks with:
 ```sh
 clang -fobjc-arc -fmodules -Wno-deprecated-declarations \
   -framework AppKit -framework ImageIO -framework CoreGraphics \
-  Sources/SINNativeServices.m Tests/native-services-tests.m \
+  Sources/SINNativeServices.m Sources/SINSliceExport.m Tests/native-services-tests.m \
   -o /tmp/SinAIPrompt-native-services-tests
 /tmp/SinAIPrompt-native-services-tests
 ```
 
-The 133 checks cover storage/deduplication, malformed pixels, encoded original-image references, relative-reference relocation, SVG and asynchronous image reads, template persistence, recent colors, YouTube URL validation, cross-display image composition and one-pixel Retina crops. Clipboard tests snapshot every existing item and format, restore them in a finally block, and verify restoration. The suite does not request screen access or call the network.
+The 139 checks cover storage/deduplication, literal text paste and PNG/TIFF copy, malformed pixels, encoded original-image references, relative-reference relocation, SVG and asynchronous image reads, template persistence, recent colors, YouTube URL validation, cross-display image composition and one-pixel Retina crops. Clipboard tests snapshot every existing item and format, restore them in a finally block, and verify restoration. The suite does not request screen access or call the network.

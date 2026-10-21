@@ -26,7 +26,11 @@ Native requests used by the editor:
 | --- | --- | --- |
 | `editor-fonts` | — | CSS string for locally installed font aliases |
 | `editor-copy` | `html`, `text`, optional `internalHtml` | No value |
-| `editor-paste` | — | `{html,text,image,markdown,base,preserveImageMarkup}`; fields optional |
+| `editor-paste` | Optional `textOnly` boolean | `{html,text,image,markdown,base,preserveImageMarkup}`; text-only returns just literal text |
+| `copy-image` | `data` PNG data URL | PNG and TIFF on the system clipboard |
+| `slice-export-begin` | `name`, `count` | Batch token, or null when cancelled |
+| `slice-export-write` | `token`, `index`, `data` PNG data URL | Acknowledges one sequential, exclusively published PNG |
+| `slice-export-end` | `token` | `{saved,total,folder}`; completed files survive cancellation |
 | `read-image` | `source` | Image data URL |
 | `save-image`, `reuse-image`, `save-image-as` | `data` PNG data URL | Relative image path; reuse may return null |
 | `reference-image` | `source`, `absolute`, `base` | `{reference,display}` or null on cancellation |
@@ -63,12 +67,14 @@ The native shell calls `window.editor` after the `ready` event:
 | Method | Purpose |
 | --- | --- |
 | `load(html, base?)`, `ready()` | Load and await the sandboxed document |
-| `html(flush?)`, `setBase(base)` | Serialize or change its asset folder, preserving the caret |
+| `html(flush?)`, `setBase(base,updatedHTML?)` | Serialize or change its asset folder and HTML, preserving the caret |
 | `captureView()`, `restoreView(state)` | Save/restore `{selectionStart,selectionLength,scroll}` using rendered text offsets |
 | `focus()`, `command(name,value?)` | Focus and execute editing actions |
 | `insertImage(source,storage?)`, `setImageStorage(storage)` | Insert inline, separate, or original-reference images |
 | `openAnnotation(image?,source?)`, `pasteCode(existing?)` | Open the full annotation editor or source block dialog |
 | `setReadOnly(bool)`, `setToolbarWrap(bool)`, `setNavigationInset(width)` | Apply native UI state |
+| `setSpellcheck(bool)`, `documentTitle(html)` | Apply spelling preference or extract the first Title paragraph |
+| `rewriteProjectReferences(html,oldURL,newURL,moves,sourceCaseSensitive,destinationCaseSensitive)` | Rewrite a detached project's saved or pending HTML using native asset mappings and volume rules; editor changes only after the native transaction succeeds |
 | `outline.items()`, `outline.jump(index)` | Read and navigate the content outline |
 | `search(options)` | Async find/replace with case, whole-word, regex and wrap options |
 | `renameImageFolder(html,old,new)`, `renameImageFile(html,documentURL,oldURL,newURL,caseSensitive?)` | Rewrite saved references; native caller supplies the volume's case behavior for image-file renames |
@@ -142,13 +148,17 @@ the actual application WKWebView, then runs native shell checks. The native
 harness restores every available NSPasteboard item/data type, writes
 `Tests/last-web-results.json`, saves `build/self-test.png`, and exits nonzero if a
 check fails. Failure reports retain previously passing check names and a stack.
-The latest integrated run passed 199 checks: 129 browser/editor checks and 70
-native shell checks. This includes source/visual switching, Save with caret and
+The integrated suite includes source/visual switching, Save with caret and
 Undo retention, lazy editor isolation, read-only native commands, source-search
 workers, export replacement and asset reuse, untouched HTML preservation,
 external-file conflicts, multi-window recovery, document/tab context commands,
 inactive-document actions, independent duplicate images and sidebar filename
-resizing. The test uses local
+resizing. October coverage adds ordered combine, Markdown imports, title-based
+saves, privacy, batch deletion, simultaneous Contents/navigation geometry and
+real project moves with saved, pending, lazy and locked documents across windows.
+Browser checks cover persistent tools and locks, image cells and slice exports,
+literal text paste, reversible full clearing, date headings and spelling preference.
+The test uses local
 video fixtures; it does not exercise online playback or request capture access.
 See [the parity audit](PARITY.md) for coverage and remaining manual cases.
 

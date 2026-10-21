@@ -21,6 +21,10 @@
     if([action isEqual:@"chooseFolder"]||[action isEqual:@"new"]){[self handleCommand:action];return;}
     if(self.annotating||self.saving||self.window.attachedSheet)return;
     if([item isKindOfClass:SINDocument.class]&&![self.documents containsObject:document])return;
+    if([action isEqual:@"private"]){document.privateDocument=!document.privateDocument;[self refreshPrivacy];return;}
+    if([action isEqual:@"emoji"]){[self chooseEmoji:document];return;}
+    if([action isEqual:@"combineSelection"]){[self combineItems:[self.navigator selectionIncludingItem:item]];return;}
+    if([action isEqual:@"deleteSelection"]){[self deleteItems:[self.navigator selectionIncludingItem:item]];return;}
     if([action isEqual:@"reveal"]||[action isEqual:@"revealPath"]){if(path)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];return;}
     if([action isEqual:@"openFolder"]||[action isEqual:@"openFolderPath"]){if(path)[NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:path.stringByDeletingLastPathComponent]];return;}
     if([action isEqual:@"copyPath"]){if(path){NSString *text=[path containsString:@" "]?[NSString stringWithFormat:@"\"%@\"",path]:path;[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:text forType:NSPasteboardTypeString];}return;}
@@ -36,7 +40,7 @@
     if([action isEqual:@"revert"]){[self revertDocument:document];return;}
     if([action isEqual:@"rename"]){[self renameDocument:document];return;}
     if([action isEqual:@"close"]){[self closeDocument:document];return;}
-    if([action isEqual:@"trash"]||[action isEqual:@"trashPath"]){if(path)[self trashPath:path];return;}
+    if([action isEqual:@"trash"]||[action isEqual:@"trashPath"]){if(path)[self trashPath:path];else if(document)[self deleteItems:@[document]];return;}
     if([action isEqual:@"renamePath"]){if([@[@"html",@"htm"] containsObject:path.pathExtension.lowercaseString]){SINDocument *doc=nil;for(SINDocument *d in self.documents)if([d.path isEqual:path])doc=d;
             if(!doc){NSError *error=nil;doc=[SINDocument openPath:path error:&error];if(!doc){[self showError:error];return;}[self.documents addObject:doc];}[self renameDocument:doc];}
         else if([@[@"png",@"jpg",@"jpeg",@"gif"] containsObject:path.pathExtension.lowercaseString])[self renameImageAtPath:path];

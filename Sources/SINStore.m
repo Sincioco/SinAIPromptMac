@@ -1,4 +1,5 @@
 #import "SINStore.h"
+#import "SINRecoveryWriter.h"
 
 static BOOL StoreError(NSError **error, NSString *message) {
     if (error) *error = [NSError errorWithDomain:SINErrorDomain code:SINErrorStorage userInfo:@{NSLocalizedDescriptionKey:message}];
@@ -26,6 +27,7 @@ static BOOL WriteJSON(id value, NSString *path, NSError **error) {
 }
 @interface SINStore ()
 @property(nonatomic, copy, readwrite) NSString *directory;
+@property(nonatomic,strong) SINRecoveryWriter *recoveryWriter;
 @end
 @implementation SINStore
 + (NSString *)defaultDirectory {
@@ -37,11 +39,15 @@ static BOOL WriteJSON(id value, NSString *path, NSError **error) {
         if (![directory isAbsolutePath]) directory = [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:directory];
         if (![NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:error]) return nil;
         _directory = directory;
+        _recoveryWriter=[[SINRecoveryWriter alloc] initWithDirectory:directory];
         _settings = [@{@"theme":@"System", @"nextDocumentNumber":@1, @"autoSaveDirectory":@"", @"wordWrap":@YES, @"statusBar":@YES, @"showToolbar":@YES, @"wrapToolbar":@YES, @"showTabs":@NO, @"imageStorage":@"", @"recentColors":@[], @"lineNumbers":@YES, @"restoreSession":@YES, @"autoSaveAllOnClose":@YES, @"openInNewWindow":@NO, @"recentFiles":@YES, @"documentList":@NO, @"explorerMode":@YES, @"contentView":@NO, @"contentWidth":@220, @"explorerShowFolders":@YES, @"explorerDirectory":@"", @"documentSort":@"newest", @"listWidth":@250, @"dateTimeFormat":@0, @"recent":@[]} mutableCopy];
         NSError *readError = nil;
         NSDictionary *loaded = ReadJSON([directory stringByAppendingPathComponent:@"settings.json"], NSDictionary.class, &readError);
         if (!loaded && readError) { if (error) *error = readError; return nil; }
         if (loaded) [_settings addEntriesFromDictionary:loaded];
+        for(NSString *key in @[@"showPrivateDocuments",@"showSpellcheck"])if(!_settings[key])_settings[key]=@YES;
+        if(!_settings[@"recentEmojis"])_settings[@"recentEmojis"]=@[];
+        if(!_settings[@"documentEmojis"])_settings[@"documentEmojis"]=@{};
         _templates = ReadJSON([directory stringByAppendingPathComponent:@"templates.json"], NSArray.class, &readError);
         if (!_templates && readError) { if (error) *error = readError; return nil; }
         if (!_templates) _templates = [NSMutableArray array];
@@ -113,22 +119,37 @@ static BOOL WriteJSON(id value, NSString *path, NSError **error) {
     self.settings[@"nextDocumentNumber"] = @(nextNumber);
     return result;
 }
-- (BOOL)saveSessionDocuments:(NSArray<SINDocument *> *)documents activeIdentifier:(NSString *)identifier error:(NSError **)error {
+- (NSDictionary *)snapshotDocuments:(NSArray<SINDocument *> *)documents activeIdentifier:(NSString *)identifier {
     NSMutableArray *values = [NSMutableArray arrayWithCapacity:documents.count];
     if ([self.settings[@"restoreSession"] boolValue]) for (SINDocument *document in documents) [values addObject:document.dictionaryRepresentation];
-    NSMutableDictionary *session = [@{@"version":@1, @"documents":values, @"savedAt":@(NSDate.date.timeIntervalSince1970)} mutableCopy];
+    NSMutableDictionary *session = [@{@"version":@1, @"documents":values} mutableCopy];
     if (identifier) session[@"activeIdentifier"] = identifier;
-    if (!WriteJSON(session, [self.directory stringByAppendingPathComponent:@"session.json"], error)) return NO;
     self.activeIdentifier = identifier;
-    return [self saveSettings:error] && [self saveTemplates:error];
+    return SINDetachedJSON(@{@"session.json":session,@"settings.json":self.settings,@"templates.json":self.templates});
 }
-- (BOOL)saveSettings:(NSError **)error { return WriteJSON(self.settings, [self.directory stringByAppendingPathComponent:@"settings.json"], error); }
-- (BOOL)saveTemplates:(NSError **)error { return WriteJSON(self.templates, [self.directory stringByAppendingPathComponent:@"templates.json"], error); }
+- (BOOL)saveSessionDocuments:(NSArray<SINDocument *> *)documents activeIdentifier:(NSString *)identifier error:(NSError **)error {
+    return [self.recoveryWriter saveSnapshot:[self snapshotDocuments:documents activeIdentifier:identifier] error:error];
+}
+- (void)saveSessionDocuments:(NSArray<SINDocument *> *)documents activeIdentifier:(NSString *)identifier completion:(void (^)(NSError *))completion {
+    [self.recoveryWriter enqueueSnapshot:[self snapshotDocuments:documents activeIdentifier:identifier] completion:completion];
+}
+- (BOOL)saveSettings:(NSError **)error { [self.recoveryWriter invalidateAfterPendingWrites];return WriteJSON(self.settings, [self.directory stringByAppendingPathComponent:@"settings.json"], error); }
+- (BOOL)saveTemplates:(NSError **)error { [self.recoveryWriter invalidateAfterPendingWrites];return WriteJSON(self.templates, [self.directory stringByAppendingPathComponent:@"templates.json"], error); }
 - (void)addRecentPath:(NSString *)path {
     NSMutableArray *recent = [self.settings[@"recent"] isKindOfClass:NSArray.class] ? [self.settings[@"recent"] mutableCopy] : [NSMutableArray array];
     [recent removeObject:path]; [recent insertObject:path atIndex:0];
     while (recent.count > 10) [recent removeLastObject];
     self.settings[@"recent"] = recent;
+}
+- (void)restoreDocumentMetadata:(SINDocument *)document {
+    id emoji=self.settings[@"documentEmojis"][document.path?:@""];
+    if([emoji isKindOfClass:NSString.class])document.emoji=emoji;
+}
+- (void)rememberDocumentEmoji:(SINDocument *)document oldPath:(NSString *)oldPath {
+    NSMutableDictionary *values=[self.settings[@"documentEmojis"] mutableCopy]?:NSMutableDictionary.new;
+    if(oldPath.length&&![oldPath isEqual:document.path])[values removeObjectForKey:oldPath];
+    if(document.path.length){if(document.emoji.length)values[document.path]=document.emoji;else [values removeObjectForKey:document.path];}
+    self.settings[@"documentEmojis"]=values;
 }
 - (BOOL)relocateToDirectory:(NSString *)directory error:(NSError **)error {
     directory = directory.stringByExpandingTildeInPath.stringByStandardizingPath;
@@ -153,6 +174,7 @@ static BOOL WriteJSON(id value, NSString *path, NSError **error) {
         [copied addObject:target];
     }
     self.directory = directory;
+    self.recoveryWriter=[[SINRecoveryWriter alloc] initWithDirectory:directory];
     [NSUserDefaults.standardUserDefaults setObject:directory forKey:@"SinAIPromptDataDirectory"];
     return YES;
 }

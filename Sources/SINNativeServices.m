@@ -1,4 +1,5 @@
 #import "SINNativeServices.h"
+#import "SINSliceExport.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -176,6 +177,7 @@ static BOOL SINWebURL(NSURL *url) { return ([@[@"https",@"http"] containsObject:
 @end
 
 @interface SINNativeServices ()
+@property(nonatomic,strong) SINSliceExport *sliceExport;
 @property(nonatomic) id captureController;
 @property(nonatomic) BOOL captureActive;
 @property(nonatomic, readwrite, copy) NSString *dataDirectory;
@@ -421,9 +423,28 @@ static BOOL SINWebURL(NSURL *url) { return ([@[@"https",@"http"] containsObject:
         if(!self.saveAsPath)error=SINError(@"There is no Save As destination.");
         else { NSString *source=SINString(message[@"source"]);result=[self referenceSource:source base:SINString(message[@"base"]) absolute:[NSURL URLWithString:source].scheme.length>0 destination:self.saveAsPath error:&error]; }
     } else if([type isEqual:@"editor-copy"]) {
-        NSPasteboard *board=NSPasteboard.generalPasteboard;[board clearContents];[board setString:SINString(message[@"text"]) forType:NSPasteboardTypeString];[board setString:SINString(message[@"html"]) forType:NSPasteboardTypeHTML];
+        NSPasteboard *board=NSPasteboard.generalPasteboard;[board clearContents];
+        if(![board setString:SINString(message[@"text"]) forType:NSPasteboardTypeString]||![board setString:SINString(message[@"html"]) forType:NSPasteboardTypeHTML])error=SINError(@"The selection could not be copied. It has not been cut.");
         if([message[@"internalHtml"] isKindOfClass:NSString.class]) { NSData *data=[NSJSONSerialization dataWithJSONObject:@{@"document":self.documentID,@"html":message[@"internalHtml"]} options:0 error:&error];if(data)[board setData:data forType:SINFragmentType]; }
-    } else if([type isEqual:@"editor-paste"])result=[self readEditorPasteboard];
+    } else if([type isEqual:@"editor-paste"])result=[message[@"textOnly"] boolValue]?@{@"text":[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString]?:@""}:[self readEditorPasteboard];
+    else if([type isEqual:@"copy-image"]) {
+        NSData *data=SINDecode(SINString(message[@"data"]),&error);
+        NSData *png=data?[SINNativeServices PNGDataFromData:data error:&error]:nil;
+        if(png){NSPasteboard *board=NSPasteboard.generalPasteboard;[board clearContents];
+            if(![board setData:png forType:NSPasteboardTypePNG])error=SINError(@"The image could not be copied to the clipboard.");
+            else {NSImage *image=[[NSImage alloc] initWithData:png];if(image.TIFFRepresentation)[board setData:image.TIFFRepresentation forType:NSPasteboardTypeTIFF];}}
+    } else if([type isEqual:@"slice-export-begin"]) {
+        NSInteger count=[message[@"count"] integerValue];if(count<1||count>1089){completion(nil,SINError(@"Choose between 1 and 1089 cells."));return YES;}
+        NSOpenPanel *panel=NSOpenPanel.openPanel;panel.title=@"Save All Slices — Choose a destination folder";panel.canChooseDirectories=YES;panel.canChooseFiles=NO;panel.canCreateDirectories=YES;
+        if([panel runModal]!=NSModalResponseOK){completion(nil,nil);return YES;}
+        if(!self.sliceExport)self.sliceExport=SINSliceExport.new;
+        result=[self.sliceExport beginInDirectory:panel.URL.path name:SINString(message[@"name"]) count:(NSUInteger)count error:&error];
+    } else if([type isEqual:@"slice-export-write"]) {
+        if(!self.sliceExport){completion(nil,SINError(@"The export is no longer active."));return YES;}
+        [self.sliceExport writeToken:SINString(message[@"token"]) index:[message[@"index"] unsignedIntegerValue] dataURL:SINString(message[@"data"]) completion:^(NSError *failure){completion(nil,failure);}];return YES;
+    } else if([type isEqual:@"slice-export-end"]) {
+        if(!self.sliceExport)error=SINError(@"The export is no longer active.");else result=[self.sliceExport endToken:SINString(message[@"token"]) error:&error];
+    }
     else if([type isEqual:@"annotation-copy"]) {
         NSString *format=SINString(message[@"format"]),*content=SINString(message[@"content"]);NSPasteboard *board=NSPasteboard.generalPasteboard;
         if([format isEqual:@"svg"]) { [board clearContents];NSData *svg=[content dataUsingEncoding:NSUTF8StringEncoding];[board setData:svg forType:@"public.svg-image"];[board setData:svg forType:@"image/svg+xml"];[board setString:content forType:NSPasteboardTypeString]; }

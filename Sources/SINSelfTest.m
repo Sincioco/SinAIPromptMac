@@ -1,4 +1,5 @@
 #import "SINWindowController.h"
+#import "SINProjectSession.h"
 
 static NSArray<NSDictionary<NSPasteboardType, NSData *> *> *SINCopyPasteboard(void) {
     NSMutableArray *items=NSMutableArray.new;
@@ -55,6 +56,7 @@ static void SINRestorePasteboard(NSArray<NSDictionary<NSPasteboardType, NSData *
     };
     void (^run)(void)=^{
         if(running||finished)return;running=YES;
+        if([NSProcessInfo.processInfo.arguments containsObject:@"--project-only"]){[self runProjectChecks:^(NSArray<NSString *> *checks,NSError *error){finish(checks,error);}];return;}
         NSString *sample=@"<!doctype html><html><head><title>Sin — AI Prompt for Mac</title></head><body><h1>Sin — AI Prompt for Mac</h1><p>Objective-C · AppKit · WebKit</p><h2>One document. Every idea.</h2><p>Write and format prompts, annotate images, reuse object templates, and keep your HTML portable.</p><ul><li><strong>Rich text</strong>, Markdown, and highlighted source blocks</li><li>Native clipboard and image capture</li><li>Search, replace, document outline, and local files</li></ul><blockquote>Built with the tools already on this Mac.</blockquote><p><span style=\"background-color:#fff2a6\">No npm. No third-party libraries.</span></p></body></html>";
         NSString *script=[NSString stringWithFormat:@"await window.editor.ready();await window.editor.load(%@);await window.editor.ready();return await (await import('./mac-self-test.js')).run();",SINJSON(sample)];
         [self.editor asyncScript:script completion:^(id checks,NSError *error){
@@ -62,9 +64,14 @@ static void SINRestorePasteboard(NSArray<NSDictionary<NSPasteboardType, NSData *
                 [self.editor evaluate:@"window.sinTestResults||[]" completion:^(id partial,NSError *readError){finish(partial,error);}];
                 return;
             }
+            if([NSProcessInfo.processInfo.arguments containsObject:@"--web-only"]){finish(checks,nil);return;}
             [self runNativeShellChecks:^(NSArray<NSString *> *nativeChecks,NSError *nativeError){
                 NSMutableArray *all=[checks mutableCopy]?:NSMutableArray.new;
-                [all addObjectsFromArray:nativeChecks?:@[]];finish(all,nativeError);
+                [all addObjectsFromArray:nativeChecks?:@[]];if(nativeError){finish(all,nativeError);return;}
+                [self runDocumentWorkflowChecks:^(NSArray<NSString *> *workflowChecks,NSError *workflowError){
+                    [all addObjectsFromArray:workflowChecks?:@[]];if(workflowError){finish(all,workflowError);return;}
+                    [self runProjectChecks:^(NSArray<NSString *> *projectChecks,NSError *projectError){[all addObjectsFromArray:projectChecks?:@[]];finish(all,projectError);}];
+                }];
             }];
         }];
     };
@@ -73,6 +80,9 @@ static void SINRestorePasteboard(NSArray<NSDictionary<NSPasteboardType, NSData *
     if(self.editor.ready)run();
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,45*NSEC_PER_SEC),dispatch_get_main_queue(),^{
         if(!running&&!finished)finish(nil,[NSError errorWithDomain:@"SinSelfTest" code:1 userInfo:@{NSLocalizedDescriptionKey:@"WKWebView did not report editor ready within 45 seconds. Check startup-error output."}]);
+    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,120*NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        if(!finished)finish(nil,[NSError errorWithDomain:@"SinSelfTest" code:2 userInfo:@{NSLocalizedDescriptionKey:@"The integrated self-test did not complete within 120 seconds."}]);
     });
 }
 @end

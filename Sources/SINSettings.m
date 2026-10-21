@@ -2,6 +2,7 @@
 #import "SINNativeServices.h"
 #import "SINAppDelegate.h"
 #import <objc/runtime.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static const void *SINSettingsKey=&SINSettingsKey;
 static NSError *SettingsError(NSString *message) { return [NSError errorWithDomain:@"SinAIPrompt" code:1 userInfo:@{NSLocalizedDescriptionKey:message}]; }
@@ -54,7 +55,8 @@ static void FlushSettingsEditors(NSArray<SINEditor *> *editors,NSUInteger index,
     [self label:@"Next document number" y:190];self.number=[[NSTextField alloc] initWithFrame:NSMakeRect(206,187,100,26)];self.number.stringValue=[NSString stringWithFormat:@"%ld",(long)MAX(1,[settings[@"nextDocumentNumber"] integerValue])];[self.panel.contentView addSubview:self.number];
     NSButton *reset=[NSButton buttonWithTitle:@"Reset to 1" target:self action:@selector(resetNumber:)];reset.frame=NSMakeRect(316,186,110,28);[self.panel.contentView addSubview:reset];
     NSTextField *numberHint=[self label:@"Existing files keep their names. New files skip names that are already in use." y:158];numberHint.font=[NSFont systemFontOfSize:11];numberHint.textColor=NSColor.secondaryLabelColor;
-    self.errorLabel=[NSTextField wrappingLabelWithString:@""];self.errorLabel.textColor=NSColor.systemRedColor;self.errorLabel.frame=NSMakeRect(24,66,532,75);[self.panel.contentView addSubview:self.errorLabel];
+    NSButton *association=[NSButton buttonWithTitle:@"Use Sin AI Prompt for .html Files…" target:self action:@selector(setHTMLDefault:)];association.frame=NSMakeRect(24,122,330,28);[self.panel.contentView addSubview:association];
+    self.errorLabel=[NSTextField wrappingLabelWithString:@""];self.errorLabel.textColor=NSColor.systemRedColor;self.errorLabel.frame=NSMakeRect(24,66,532,49);[self.panel.contentView addSubview:self.errorLabel];
     NSButton *cancel=[NSButton buttonWithTitle:@"Cancel" target:self action:@selector(cancel:)];cancel.frame=NSMakeRect(350,20,94,30);cancel.keyEquivalent=@"\e";[self.panel.contentView addSubview:cancel];
     NSButton *save=[NSButton buttonWithTitle:@"Save" target:self action:@selector(save:)];save.frame=NSMakeRect(458,20,98,30);save.keyEquivalent=@"\r";[self.panel.contentView addSubview:save];
     [self.owner.window beginSheet:self.panel completionHandler:^(NSModalResponse response) { [self.panel orderOut:nil];objc_setAssociatedObject(self.owner,SINSettingsKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }];
@@ -65,9 +67,15 @@ static void FlushSettingsEditors(NSArray<SINEditor *> *editors,NSUInteger index,
     [panel beginSheetModalForWindow:self.panel completionHandler:^(NSModalResponse response){if(response==NSModalResponseOK)field.stringValue=panel.URL.path;}];
 }
 - (void)resetNumber:(id)sender { self.number.stringValue=@"1"; }
+- (void)setHTMLDefault:(NSButton *)sender {
+    sender.enabled=NO;
+    [NSWorkspace.sharedWorkspace setDefaultApplicationAtURL:NSBundle.mainBundle.bundleURL toOpenContentType:UTTypeHTML completionHandler:^(NSError *error){
+        dispatch_async(dispatch_get_main_queue(),^{sender.enabled=YES;if(error)[self fail:error];else {self.errorLabel.textColor=NSColor.secondaryLabelColor;self.errorLabel.stringValue=@"Sin AI Prompt is now the default application for HTML files.";}});
+    }];
+}
 - (void)cancel:(id)sender { if(!self.saving)[self.owner.window endSheet:self.panel returnCode:NSModalResponseCancel]; }
 - (BOOL)windowShouldClose:(NSWindow *)sender { [self cancel:nil];return NO; }
-- (void)fail:(NSError *)error { self.errorLabel.stringValue=error.localizedDescription?:@"Settings could not be saved."; }
+- (void)fail:(NSError *)error { self.errorLabel.textColor=NSColor.systemRedColor;self.errorLabel.stringValue=error.localizedDescription?:@"Settings could not be saved."; }
 - (void)save:(NSButton *)sender {
     if(self.saving)return;NSArray<SINWindowController *> *controllers=SettingsControllers(self.owner);
     for(SINWindowController *controller in controllers)if(controller.saving){[self fail:SettingsError(@"Wait for the current document save to finish before changing settings.")];return;}

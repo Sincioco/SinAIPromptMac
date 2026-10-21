@@ -156,28 +156,28 @@ static void ContextRestorePasteboard(NSArray *saved) {
     };
     BOOL (^menuCheck)(SINDocument *,NSArray *,NSArray *,NSString *,NSError **)=^BOOL(SINDocument *document,NSArray *titles,NSArray *enabled,NSString *name,NSError **error){
         NSMenu *menu=[scratch documentContextMenu:document];
-        NSArray *commands=@[@"rename",@"duplicate",@"pin",document.readOnly?@"unlock":@"lock",@"trash",@"|",@"copyPath",@"copyAI",@"openFolder",@"|",@"revert",@"close"];
+        NSArray *commands=@[@"rename",@"duplicate",@"pin",@"private",@"emoji",document.readOnly?@"unlock":@"lock",@"",@"trash",@"|",@"copyPath",@"copyAI",@"openFolder",@"|",@"revert",@"close"];
         if(!ContextMatches(ContextMenuValues(menu,@"title"),titles,[name stringByAppendingString:@" titles"],error)||
            !ContextMatches(ContextMenuValues(menu,@"command"),commands,[name stringByAppendingString:@" commands"],error)||
            !ContextMatches(ContextMenuValues(menu,@"enabled"),enabled,[name stringByAppendingString:@" enabled states"],error))return NO;
         [checks addObject:name];return YES;
     };
-    NSArray *normalTitles=@[@"Rename…",@"Duplicate",@"Pin To Top",@"Lock Document",@"Delete…",@"|",@"Copy Full Path",@"Copy for AI Use",@"Open Containing Folder",@"|",@"Revert To Last Saved…",@"Close"];
-    NSArray *allEnabled=@[@YES,@YES,@YES,@YES,@YES,@"|",@YES,@YES,@YES,@"|",@YES,@YES];
+    NSArray *normalTitles=@[@"Rename…",@"Duplicate",@"Pin To Top",@"Private",@"Choose Emoji…",@"Lock Document",@"Move to Project",@"Delete…",@"|",@"Copy Full Path",@"Copy for AI Use",@"Open Containing Folder",@"|",@"Revert To Last Saved…",@"Close"];
+    NSArray *allEnabled=@[@YES,@YES,@YES,@YES,@YES,@YES,@YES,@YES,@"|",@YES,@YES,@YES,@"|",@YES,@YES];
     NSArray *steps=@[
         ^(void (^next)(NSError *)){
             ContextLoaded(scratch.editor,next);
         },
         ^(void (^next)(NSError *)){
             NSError *error=nil;
-            if(!menuCheck(draft,normalTitles,@[@YES,@YES,@YES,@YES,@NO,@"|",@NO,@YES,@NO,@"|",@NO,@YES],@"Draft document menu matches upstream command order, labels and enabled states",&error)||
+            if(!menuCheck(draft,normalTitles,@[@YES,@YES,@YES,@YES,@YES,@YES,@NO,@YES,@"|",@NO,@YES,@NO,@"|",@NO,@YES],@"Draft document menu includes emoji, privacy and Delete while disabling saved-file actions",&error)||
                !menuCheck(target,normalTitles,allEnabled,@"Saved document menu matches upstream command order, labels and enabled states",&error)||
-               !menuCheck(missing,normalTitles,@[@NO,@YES,@YES,@YES,@NO,@"|",@YES,@YES,@YES,@"|",@NO,@YES],@"Missing-file document menu retains path actions and disables file-required actions",&error)){next(error);return;}
+               !menuCheck(missing,normalTitles,@[@NO,@YES,@YES,@YES,@YES,@YES,@YES,@NO,@"|",@YES,@YES,@YES,@"|",@NO,@YES],@"Missing-file document menu retains path actions and disables file-required actions",&error)){next(error);return;}
             target.pinned=YES;NSMutableArray *pinned=normalTitles.mutableCopy;pinned[2]=@"Unpin";
             if(!menuCheck(target,pinned,allEnabled,@"Pinned document menu offers Unpin at the original command position",&error)){next(error);return;}
             target.pinned=NO;
             if(![target setFileReadOnly:YES error:&error]){next(error);return;}
-            NSMutableArray *locked=normalTitles.mutableCopy;locked[3]=@"Unlock Document";
+            NSMutableArray *locked=normalTitles.mutableCopy;locked[5]=@"Unlock Document";
             if(!menuCheck(target,locked,allEnabled,@"Locked document menu offers Unlock without dropping other upstream commands",&error)){next(error);return;}
             if(![target setFileReadOnly:NO error:&error]){next(error);return;}
             NSMenuItem *close=ContextItem([scratch documentContextMenu:target],@"close");
@@ -203,7 +203,8 @@ static void ContextRestorePasteboard(NSArray *saved) {
             NSArray *fileCommands=@[@"renamePath",@"trashPath",@"|",@"revealPath",@"openFolderPath"];
             for(NSString *path in @[target.path,imagePath]){
                 NSMenu *menu=[scratch.navigator contextMenuForItem:path];
-                if(!ContextMatches(ContextMenuValues(menu,@"title"),fileTitles,@"HTML/image Explorer labels",&error)||!ContextMatches(ContextMenuValues(menu,@"command"),fileCommands,@"HTML/image Explorer commands",&error)||!ContextMatches(ContextMenuValues(menu,@"enabled"),@[@YES,@YES,@"|",@YES,@YES],@"HTML/image Explorer enabled states",&error)){next(error);return;}
+                NSMutableArray *titles=fileTitles.mutableCopy,*commands=fileCommands.mutableCopy,*enabled=[@[@YES,@YES,@"|",@YES,@YES] mutableCopy];if([path isEqual:target.path]){[titles insertObject:@"Move to Project" atIndex:1];[commands insertObject:@"" atIndex:1];[enabled insertObject:@YES atIndex:1];}
+                if(!ContextMatches(ContextMenuValues(menu,@"title"),titles,@"HTML/image Explorer labels",&error)||!ContextMatches(ContextMenuValues(menu,@"command"),commands,@"HTML/image Explorer commands",&error)||!ContextMatches(ContextMenuValues(menu,@"enabled"),enabled,@"HTML/image Explorer enabled states",&error)){next(error);return;}
             }
             [checks addObject:@"Explorer HTML and image menus preserve Rename/Delete order and Finder equivalents"];
             for(NSString *path in @[pdfPath,assetFolder]){
@@ -230,15 +231,15 @@ static void ContextRestorePasteboard(NSArray *saved) {
             });
         },
         ^(void (^next)(NSError *)){
-            NSError *error=nil;NSUInteger count=scratch.documents.count;
+            NSError *error=nil;NSUInteger count=scratch.documents.count;NSArray *before=scratch.documents.copy;
             NSString *autosave=[directory stringByAppendingPathComponent:@"Duplicate autosave guard"];
             store.settings[@"autoSaveDirectory"]=autosave;
             NSNumber *nextDocumentNumber=store.settings[@"nextDocumentNumber"];
             if(!check(!scratch.editors[lazy.identifier]&&scratch.active==active,@"Duplicate regression begins with an inactive document whose editor is still lazy",&error)||!ContextClick([scratch documentContextMenu:lazy],@"duplicate",&error)){next(error);return;}
-            ContextPoll(^BOOL{return scratch.contextFailure||(scratch.documents.count==count+1&&scratch.active==scratch.documents.lastObject&&!scratch.saving);},250,^(BOOL complete){
+            ContextPoll(^BOOL{return scratch.contextFailure||(scratch.documents.count==count+1&&![before containsObject:scratch.active]&&!scratch.saving);},250,^(BOOL complete){
                 NSError *failure=scratch.contextFailure;
                 if(!check(complete&&!failure&&scratch.documents.count==count+1,@"Duplicating an inactive lazy document completes through its context action",&failure)){next(failure);return;}
-                SINDocument *copy=scratch.documents.lastObject;NSString *disk=[NSString stringWithContentsOfFile:copy.path encoding:NSUTF8StringEncoding error:&failure];
+                SINDocument *copy=scratch.active;NSString *disk=[NSString stringWithContentsOfFile:copy.path encoding:NSUTF8StringEncoding error:&failure];
                 if(!check(!failure&&copy!=lazy&&[copy.text containsString:@"LAZY DUPLICATE SOURCE SENTINEL"]&&![copy.text containsString:@"ACTIVE DOCUMENT SENTINEL"]&&[disk containsString:@"LAZY DUPLICATE SOURCE SENTINEL"]&&![copy.path isEqual:lazy.path],@"Inactive lazy Duplicate exports the clicked source rather than the active document",&failure)){next(failure);return;}
                 if(!check([copy.newline isEqual:lazy.newline]&&[store.settings[@"nextDocumentNumber"] isEqual:nextDocumentNumber]&&[fm contentsOfDirectoryAtPath:autosave error:NULL].count==0,@"Duplicate preserves source newline choice without consuming a prompt number or creating a blank autosave file",&failure)){next(failure);return;}
                 NSString *copiedFolder=copy.path.stringByDeletingPathExtension;NSArray *assets=[fm contentsOfDirectoryAtPath:copiedFolder error:&failure];

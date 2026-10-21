@@ -87,12 +87,14 @@ export function createTextFormatting(doc) {
     // The browser performs the split (and owns undo); style only its new paragraph.
     doc.addEventListener('input',()=>{
       const next=currentBlock(doc);
-      if(next&&next!==previous&&next.textContent.length===0){
-        applyParagraphStyle(doc,style.next);
-        const selection=doc.getSelection();selection?.collapseToEnd();
+      if(next&&next!==previous){
+        // Splitting in the middle also creates a new paragraph. Keep the caret
+        // before its existing text, including after an Enter/Backspace merge.
+        const formatted=applyParagraphStyle(doc,style.next);
+        if(formatted)doc.getSelection()?.collapse(formatted,0);
       }
     },{once:true});
   }
   doc.addEventListener('beforeinput',followingParagraph);
-  return {setFontSize};
+  return {setFontSize,reset(){pendingSize=null;existingFonts.clear();doc.execCommand('removeFormat',false,null);}};
 }

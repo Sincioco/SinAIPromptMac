@@ -21,6 +21,8 @@ FOUNDATION_EXPORT BOOL SINMoveFilePreservingCase(NSString *source, NSString *des
 @property(nonatomic) NSInteger untitledNumber;
 @property(nonatomic) BOOL autosave;
 @property(nonatomic) BOOL pinned;
+@property(nonatomic) BOOL privateDocument;
+@property(nonatomic,copy) NSString *emoji;
 @property(nonatomic) BOOL readOnly;
 @property(nonatomic) NSInteger zoom;
 @property(nonatomic) NSRange selection;

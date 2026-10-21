@@ -13,6 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<SINDocument *> *)restoreDocuments:(NSError **)error;
 - (BOOL)saveSessionDocuments:(NSArray<SINDocument *> *)documents activeIdentifier:(nullable NSString *)identifier error:(NSError **)error;
 - (BOOL)saveSettings:(NSError **)error;
+- (void)saveSessionDocuments:(NSArray<SINDocument *> *)documents activeIdentifier:(nullable NSString *)identifier completion:(void (^)(NSError * _Nullable))completion;
+- (void)restoreDocumentMetadata:(SINDocument *)document;
+- (void)rememberDocumentEmoji:(SINDocument *)document oldPath:(nullable NSString *)oldPath;
 - (BOOL)saveTemplates:(NSError **)error;
 - (BOOL)relocateToDirectory:(NSString *)directory error:(NSError **)error;
 - (void)addRecentPath:(NSString *)path;

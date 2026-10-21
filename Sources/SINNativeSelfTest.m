@@ -133,7 +133,7 @@ static NSDictionary *NativeAssetSnapshot(NSString *folder,NSError **error) {
                 NSRect popupInContent=[editor.webView convertRect:popup toView:self.window.contentView];
                 NSRect navInContent=[self.navigator.view convertRect:self.navigator.view.bounds toView:self.window.contentView];
                 NSRect overlap=NSIntersectionRect(popupInContent,navInContent);
-                if(NSIsEmptyRect(overlap)){next(NativeCheckError(@"Font Color palette did not overlap the expanded sidebar for testing."));return;}
+                if(NSIsEmptyRect(overlap)){next(NativeCheckError([NSString stringWithFormat:@"Font Color palette did not overlap the expanded sidebar for testing (popup %@, navigation %@).",NSStringFromRect(popupInContent),NSStringFromRect(navInContent)]));return;}
                 NSPoint center=NSMakePoint(NSMidX(overlap),NSMidY(overlap));
                 PollNativeCheck(^BOOL{return editor.overlayRects.count>0&&NativeHitBelongsTo([self.window.contentView hitTest:center],editor.webView);},100,^(BOOL ready){
                     if(ready)[checks addObject:@"The real Font Color popover receives pointer events where it overlaps native navigation"];
@@ -241,6 +241,9 @@ static NSDictionary *NativeAssetSnapshot(NSString *folder,NSError **error) {
                 [editor.sourceView.undoManager removeAllActions];
                 [editor.sourceView insertText:@"<!-- Native source edit -->" replacementRange:NSMakeRange(editor.sourceView.string.length,0)];
                 NSRange selected=editor.sourceView.selectedRange;
+                NSDate *modified=first.modifiedDate;editor.sourceView.selectedRange=NSMakeRange(1,0);
+                if(!check([scratch.status.stringValue hasPrefix:@"Ln 1, Col 2"]&&[first.modifiedDate isEqual:modified],@"Source caret movement updates status without changing the document modification time",&error)){next(error);return;}
+                editor.sourceView.selectedRange=selected;
                 [scratch saveDocument:first saveAs:NO completion:^(BOOL saved){
                     NSError *error=nil;NSString *disk=[NSString stringWithContentsOfFile:first.path encoding:NSUTF8StringEncoding error:NULL];
                     if(!check(saved&&[disk containsString:@"Native source edit"],@"Native Save flushes source edits to the existing file",&error)||!check(NSEqualRanges(selected,editor.sourceView.selectedRange)&&editor.sourceView.undoManager.canUndo,@"Native Save preserves source caret and Undo history",&error)){next(error);return;}

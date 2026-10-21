@@ -10,6 +10,7 @@ import {captureTemplate,parseTemplate,templateJson} from './templates.js';
 import {runCodeBlockTests} from './code-block-self-test.js';
 import {runDocumentToolsTests} from './document-tools-self-test.js';
 import {runInteractionTests} from './mac-interaction-tests.js';
+import {runParityTests} from './mac-parity-tests.js';
 
 export async function run(){
   const results=[],check=(ok,name)=>{if(!ok){const error=Error(name);error.stack=name+'\n'+error.stack;throw error;}results.push(name);};
@@ -71,6 +72,7 @@ export async function run(){
     const template=await parseTemplate(templateJson(captureTemplate(scene.objects,'Test object')));
     check(template.objects.length===1&&template.name==='Test object','Reusable annotation templates retain editable object geometry');
     await runInteractionTests(check,scene,png);
+    await runParityTests(check);
     await window.editor.load(`<p>Image</p><img src="${png.data}" data-sin-storage="inline">`);
     const standalone=parseHtml(await portableHtml(window.editor.html(),documentRoot));
     check(standalone.images.length===1&&standalone.images[0].src.startsWith('data:image/png;base64,')&&!standalone.querySelector('base'),'Standalone HTML embeds its image without private URLs');

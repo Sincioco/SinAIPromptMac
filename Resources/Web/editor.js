@@ -1,9 +1,11 @@
 import {send,request,native,blobData,escapeHtml,ask,report} from './bridge.js';
 import {parseHtml,ensureStyle,editingStyles,serialize,toPng,portableHtml,pasteSafeHtml,renameImageFolder} from './document.js';
 import {renameImageFile} from './asset-references.js';
+import {rewriteProjectReferences} from './project-references.js';
 import {createDocumentSearch} from './document-search.js';
-import {createDocumentOutline} from './document-outline.js';
+import {createDocumentOutline,documentTitle} from './document-outline.js';
 import {createDocumentAccess} from './document-access.js';
+import {selectAllContent,clearAllSelected} from './document-clearing.js';
 import {attachListNumbering,toggleNumbering} from './list-numbering.js';
 import {createImageSelection} from './image-selection.js';
 import {createImageInsertion} from './image-insertion.js';
@@ -17,6 +19,7 @@ import {annotate} from './annotation-ui.js';
 import {id,outputBounds} from './annotation-model.js';
 import {createRibbon} from './ribbon.js';
 import {clipboardCommand} from './editor-clipboard.js';
+import {insertDateHeading} from './word-styles.js';
 import {attachFileDrop} from './file-drop.js';
 import {observeEditorChrome} from './editor-chrome.js';
 import {prepareOriginalImages,observeOriginalImages} from './original-images.js';
@@ -30,11 +33,13 @@ const frame=document.querySelector('#document'),$=s=>document.querySelector(s);
 if(macNative)frame.sandbox.add('allow-scripts');
 let doc=null,selection=null,currentRaw='',base=documentRoot,loading=Promise.resolve(),loadingNow=false;
 let changeTimer,lastImageStatus="",loadRevision=0;
+let showSpellcheck=true;
+function setSpellcheck(value){showSpellcheck=!!value;if(doc)doc.body.spellcheck=showSpellcheck;}
 function imageStatus(source=""){if(source!==lastImageStatus){lastImageStatus=source;send('image-status',{source});}}
 const exports=new Map();
 const search=createDocumentSearch(()=>doc,changed);
 const images=createImageSelection(frame,changed,image=>imageStatus(image?.getAttribute('src')||''));
-const imageActions=createImageActions(frame,{edit:openAnnotation,resize:()=>images.resize(),remove:target=>{const range=doc.createRange();range.selectNode(target);selection=range;command('delete');images.select(null);}});
+const imageActions=createImageActions(frame,{select:selectImage,edit:openAnnotation,resize:()=>images.resize(),remove:target=>{const range=doc.createRange();range.selectNode(target);selection=range;command('delete');images.select(null);}});
 const videos=createYouTubePlayer(frame,target=>videoSelection.select(target));
 const videoSelection=createVideoSelection(frame,{changed,command,saveSelection,stopPlayback:videos.close,clearImage:()=>{images.select(null);imageActions.close();}});
 const ribbon=createRibbon($('#toolbar'),{getDocument:()=>doc,saveSelection,restoreSelection,command,changed});
@@ -61,8 +66,9 @@ async function focus(){
 }
 function changed(){
   if(!doc||loadingNow)return;search.invalidate();saveSelection();clearTimeout(changeTimer);
-  // Keep full-document serialization and native synchronization out of keystrokes.
-  changeTimer=setTimeout(()=>{currentRaw=serialize(doc);send('change',{html:currentRaw});},150);
+  // Embedded screenshots make full HTML serialization/IPC expensive. Wait for a
+  // typing pause; explicit save, source switching and closing still flush now.
+  changeTimer=setTimeout(()=>{currentRaw=serialize(doc);send('change',{html:currentRaw});},600);
 }
 function html(flush=false){if(flush)clearTimeout(changeTimer);return loadingNow?currentRaw:doc?serialize(doc):currentRaw;}
 function captureView(){
@@ -99,7 +105,7 @@ async function load(raw,newBase=base){
   const style=input.createElement('style');style.dataset.sinRuntime='1';style.textContent=fontCss+editingStyles;input.head.append(style);
   if(macNative)isolateDocument(input);
   loading=prepareOriginalImages(input).then(()=>{if(revision!==loadRevision)return;return new Promise(resolve=>{frame.onload=()=>{
-    doc=frame.contentDocument;doc.body.contentEditable='true';doc.body.spellcheck=true;loadingNow=false;
+    doc=frame.contentDocument;doc.body.contentEditable='true';doc.body.spellcheck=showSpellcheck;loadingNow=false;
     ribbon.attach(doc);
     attachFileDrop(doc);access.attach(doc);
     attachListNumbering(doc);
@@ -113,6 +119,7 @@ async function load(raw,newBase=base){
     doc.addEventListener('pointerover',event=>imageStatus(event.target.closest('img')?.getAttribute('src')||images.selected?.getAttribute('src')||''));
     doc.addEventListener('pointerout',event=>{if(event.target.closest('img'))imageStatus(images.selected?.getAttribute('src')||'');});
     doc.addEventListener('keydown',shortcuts);doc.addEventListener('paste',paste);
+    doc.addEventListener('beforeinput',event=>{if(event.inputType.startsWith('delete')&&!event.target.closest?.('input,textarea,select')&&clearDocumentSelection()){event.preventDefault();changed();syncFormatting();}});
     doc.addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault();});
     doc.addEventListener('drop',event=>{const files=[...event.dataTransfer.files].filter(f=>f.type.startsWith('image/'));if(files.length){event.preventDefault();(async()=>{for(const f of files)await insertImage(await blobData(f));})().catch(report);}});
     resolve();
@@ -120,14 +127,14 @@ async function load(raw,newBase=base){
   };frame.srcdoc='<!DOCTYPE html>'+input.documentElement.outerHTML;});});
   return loading;
 }
-async function setBase(newBase){
+async function setBase(newBase,updated=null){
   saveSelection();
   const path=node=>{const indexes=[];while(node&&node!==doc.body){indexes.unshift([...node.parentNode.childNodes].indexOf(node));node=node.parentNode;}return indexes;};
   const saved=selection?{start:path(selection.startContainer),end:path(selection.endContainer),startOffset:selection.startOffset,endOffset:selection.endOffset}:null;
   const scroll={x:doc.defaultView.scrollX,y:doc.defaultView.scrollY};
   // Both native hosts apply changed folder mappings to newly loaded documents.
   // Reload only the sandboxed document, keeping the pending paste and its caret.
-  await load(html(),newBase);
+  await load(updated??html(),newBase);
   if(saved){const node=indexes=>indexes.reduce((parent,index)=>parent.childNodes[index],doc.body);selection=doc.createRange();selection.setStart(node(saved.start),saved.startOffset);selection.setEnd(node(saved.end),saved.endOffset);}
   restoreSelection();doc.defaultView.scrollTo(scroll.x,scroll.y);
 }
@@ -139,11 +146,11 @@ function command(name,value=null){
     const input=document.activeElement;
     if(modal.contains(input)&&input.matches('input,textarea')){
       if(name==='selectAll'){input.select();return;}
-      if(native&&['copy','cut','paste'].includes(name))return (async()=>{
+      if(native&&['copy','cut','paste','pasteText'].includes(name))return (async()=>{
         const start=input.selectionStart,end=input.selectionEnd;
         if(start==null||end==null){document.execCommand(name);return;}
-        if(name==='paste'){
-          const copied=await request('editor-paste');
+        if(name==='paste'||name==='pasteText'){
+          const copied=await request('editor-paste',{textOnly:true});
           if(!input.isConnected)return;
           input.focus();input.setSelectionRange(start,end);document.execCommand('insertText',false,copied?.text??copied?.markdown??'');
         }else{
@@ -156,18 +163,27 @@ function command(name,value=null){
     }
     if(modal.matches('.annotation')){
       if(name==='selectAll')modal.dispatchEvent(new KeyboardEvent('keydown',{key:'a',metaKey:true,bubbles:true,cancelable:true}));
-      else if(['undo','redo','copy','paste','delete'].includes(name))modal.querySelector(`[data-action="${name}"]`)?.click();
+      else if(name==='copy')modal.dispatchEvent(new KeyboardEvent('keydown',{key:'c',metaKey:true,bubbles:true,cancelable:true}));
+      else if(['undo','redo','paste','delete'].includes(name))modal.querySelector(`[data-action="${name}"]`)?.click();
     }
     return;
   }
   if(!doc||access.locked&&!['copy','selectAll'].includes(name))return;restoreSelection();
-  if(['cut','copy','paste'].includes(name))return clipboardCommand(doc,name,{changed,insertImage}).catch(report);
+  if(name==='selectAll'){selectAllContent(doc);saveSelection();syncFormatting();return;}
+  if(['cut','copy','paste','pasteText'].includes(name))return clipboardCommand(doc,name,{changed,insertImage,clearAll:clearDocumentSelection}).catch(report);
   doc.execCommand('styleWithCSS',false,true);
   if(name==='insertOrderedList')toggleNumbering(doc);
   else if(isMac&&name==='insertHTML'&&/data-sin-youtube\s*=/.test(value))insertAtom(doc,value,'video');
-  else if(['delete','insertHTML','insertText'].includes(name))editVideoAtoms(doc,()=>doc.execCommand(name,false,value));
+  else if(name==='delete'){if(!clearDocumentSelection())editVideoAtoms(doc,()=>doc.execCommand('delete'));}
+  else if(name==='insertDateHeading')editVideoAtoms(doc,()=>insertDateHeading(doc,value));
+  else if(['insertHTML','insertText'].includes(name))editVideoAtoms(doc,()=>doc.execCommand(name,false,value));
   else doc.execCommand(name,false,value);
   changed();syncFormatting();
+}
+function clearDocumentSelection(){
+  if(!doc||access.locked||!clearAllSelected(doc))return false;
+  videos.close();videoSelection.select(null);images.select(null);imageActions.close();
+  ribbon.resetFormatting();saveSelection();return true;
 }
 function syncFormatting(){ribbon.sync();}
 function selectImage(image){images.select(image);}
@@ -209,6 +225,7 @@ async function openAnnotation(image=null,capturedSource=null){
 }
 function shortcuts(event){
   const ctrl=event.ctrlKey||event.metaKey,key=event.key.toLowerCase();let action=null;
+  if(ctrl&&!event.shiftKey&&key==='a'&&!event.target.closest?.('input,textarea,select')){event.preventDefault();command('selectAll');return;}
   if(native&&ctrl&&!event.shiftKey&&['c','x'].includes(key)){event.preventDefault();saveSelection();command(key==='c'?'copy':'cut');return;}
   if(isMac&&event.metaKey&&key==='z'){event.preventDefault();command(event.shiftKey?'redo':'undo');return;}
   if(ctrl){const map={s:event.altKey?'saveAll':event.shiftKey?'saveAs':'save',n:'new',t:'new',o:'open',w:'close',f:'find',h:'replace',d:'longDate',l:'separator',tab:event.shiftKey?'previous':'next','+':'zoomIn','=':'zoomIn','-':'zoomOut','0':'zoomReset'};action=map[key];if(key==='l'&&event.shiftKey)action='documentList';if(key==='u'&&event.shiftKey){event.preventDefault();send('source');return;}}
@@ -241,13 +258,16 @@ $('#regionCapture').onclick=async()=>{
   finally{$('#regionCapture').disabled=false;}
 };
 $('#link').onclick=()=>insertLink({getDocument:()=>doc,saveSelection,command}).catch(report);
-$('#notice').onclick=()=>$('#notice').hidden=true;
+$('#dismissNotice').onclick=()=>$('#notice').hidden=true;
 window.editor={load,html,setBase,focus,command,captureView,restoreView,insertImage,openAnnotation,pasteCode,renameImageFolder,setImageStorage:imageInsertion.setStorage,ready:()=>loading,
-  stopMedia:videos.close,setToolbarWrap:ribbon.setWrap,
+  stopMedia:videos.close,setToolbarWrap:ribbon.setWrap,setSpellcheck,
   setReadOnly:value=>{access.set(value);images.select(null);imageActions.close();videoSelection.select(null);},
   outline:createDocumentOutline(()=>doc),
-  setNavigationInset:width=>{frame.style.marginLeft=width+'px';frame.style.width=`calc(100% - ${width}px)`;},
+  documentTitle:raw=>documentTitle(parseHtml(raw)),
+  setNavigationInset:width=>{for(const area of [frame,$('#notice')]){area.style.marginLeft=width+'px';area.style.width=`calc(100% - ${width}px)`;}},
   renameImageFile,
+  rewriteProjectReferences,
+  async moveProjectReferences(oldUrl,newUrl,moves,caseSensitive=isMac,destinationCaseSensitive=caseSensitive){await loading;const updated=rewriteProjectReferences(html(true),oldUrl,newUrl,moves,caseSensitive,destinationCaseSensitive);await setBase(base,updated);return updated;},
   async renameOpenImageFile(documentUrl,oldUrl,newUrl){await loading;const updated=renameImageFile(html(true),documentUrl,oldUrl,newUrl);await load(updated);return updated;},
   search:options=>search.run(options),
   beginMarkdown(folder=null){const key=id();(async()=>{await loading;return await htmlToMarkdown(doc,async png=>{const path=await request('save-image-as',{data:png});return folder?new URL(path,folder).href:path;});})().then(html=>exports.set(key,{html})).catch(error=>exports.set(key,{error:error.message}));return key;},

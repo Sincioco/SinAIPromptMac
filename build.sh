@@ -7,6 +7,8 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-nullab
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp -R Resources/Web "$APP/Contents/Resources/"
 cp Resources/AppIcon.png "$APP/Contents/Resources/"
+if [[ -d Resources/Documents ]]; then cp -R Resources/Documents "$APP/Contents/Resources/"; fi
+if [[ -f LICENSE ]]; then cp LICENSE "$APP/Contents/Resources/"; fi
 if [[ -f docs/PARITY.md ]]; then cp docs/PARITY.md "$APP/Contents/Resources/"; fi
 ICONSET="$PWD/build/AppIcon.iconset"
 mkdir -p "$ICONSET"

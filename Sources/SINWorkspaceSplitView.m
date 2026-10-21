@@ -2,6 +2,15 @@
 #import <QuartzCore/QuartzCore.h>
 
 @implementation SINWorkspaceSplitView
+- (void)setPosition:(CGFloat)position ofDividerAtIndex:(NSInteger)index {
+    // AppKit expands a hidden adjacent pane when a divider is positioned. Pane
+    // visibility belongs to the View commands, including when Contents sits
+    // between navigation and the document.
+    NSMutableArray *hidden=NSMutableArray.new;for(NSView *view in self.subviews)if(view.hidden)[hidden addObject:view];
+    [super setPosition:position ofDividerAtIndex:index];
+    BOOL restored=NO;for(NSView *view in hidden)if(!view.hidden){view.hidden=YES;restored=YES;}
+    if(restored)[super adjustSubviews];
+}
 - (NSView *)hitTest:(NSPoint)point {
     NSPoint local=[self convertPoint:point fromView:self.superview];
     for(NSValue *value in self.excludedRects)if(NSPointInRect(local,value.rectValue))return nil;

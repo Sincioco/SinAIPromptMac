@@ -174,7 +174,7 @@ static BOOL MergeAssets(NSString *source,NSString *destination,BOOL merge,NSMuta
     if ((self = [super init])) {
         _identifier = NSUUID.UUID.UUIDString; _text = @""; _savedText = @"";
         _encodingName = @"UTF-8"; _savedEncoding = @"UTF-8"; _newline = @"\n"; _savedNewline = @"\n";
-        _untitledNumber = 1; _zoom = 100; _createdDate = NSDate.date; _modifiedDate = NSDate.date;
+        _untitledNumber = 1; _zoom = 100; _createdDate = NSDate.date; _modifiedDate = NSDate.date; _emoji = @"";
     }
     return self;
 }
@@ -280,6 +280,7 @@ static BOOL MergeAssets(NSString *source,NSString *destination,BOOL merge,NSMuta
 }
 - (BOOL)renameToFilename:(NSString *)filename error:(NSError **)error {
     if (!filename.length || filename.length > 255 || ![filename.lastPathComponent isEqual:filename] || [filename isEqual:@"."] || [filename isEqual:@".."] || [filename rangeOfString:@":"].location != NSNotFound || ![filename stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) return Fail(error, SINErrorInvalidName, @"Enter a filename without a folder path or colon.");
+    if (!filename.pathExtension.length) filename=[filename stringByAppendingPathExtension:@"html"];
     if (!self.path) { self.draftName = filename; return YES; }
     if (self.readOnly || ReadOnly(self.path)) return Fail(error, SINErrorReadOnly, @"Unlock the document before renaming it.");
     NSString *originalPath = self.path, *destination = [originalPath.stringByDeletingLastPathComponent stringByAppendingPathComponent:filename];
@@ -330,10 +331,13 @@ static BOOL MergeAssets(NSString *source,NSString *destination,BOOL merge,NSMuta
     if (self.path) value[@"path"] = self.path;
     if (self.draftName) value[@"draftName"] = self.draftName;
     if (self.fingerprint) value[@"fingerprint"] = self.fingerprint;
+    value[@"privateDocument"]=@(self.privateDocument);value[@"emoji"]=self.emoji?:@"";
     return value;
 }
 + (instancetype)documentFromDictionary:(NSDictionary *)dictionary {
     SINDocument *doc = [self new];
+    doc.privateDocument=[dictionary[@"privateDocument"] boolValue];
+    if([dictionary[@"emoji"] isKindOfClass:NSString.class])doc.emoji=dictionary[@"emoji"];
     for (NSString *key in @[@"identifier", @"path", @"draftName", @"text", @"savedText", @"encodingName", @"savedEncoding", @"newline", @"savedNewline", @"fingerprint"]) if ([dictionary[key] isKindOfClass:NSString.class]) [doc setValue:dictionary[key] forKey:key];
     for (NSString *key in @[@"untitledNumber", @"autosave", @"pinned", @"readOnly", @"zoom", @"scroll"]) if ([dictionary[key] isKindOfClass:NSNumber.class]) [doc setValue:dictionary[key] forKey:key];
     if ([dictionary[@"createdDate"] isKindOfClass:NSNumber.class]) doc.createdDate = [NSDate dateWithTimeIntervalSince1970:[dictionary[@"createdDate"] doubleValue]];

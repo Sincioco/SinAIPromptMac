@@ -47,12 +47,16 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
 @property(nonatomic,copy) NSString *loadedRaw;
 @property(nonatomic) BOOL invalidated;
 @property(nonatomic,strong) NSMutableArray<void (^)(void)> *whenReady;
+@property(nonatomic) BOOL documentLoading;
+@property(nonatomic) NSUInteger documentLoadRevision;
+@property(nonatomic,strong) NSError *documentLoadError;
+@property(nonatomic,strong) NSMutableArray<void (^)(NSError *)> *whenDocumentReady;
 @property(nonatomic,strong) SINSearchPanel *searchPanel;
 @end
 @implementation SINEditor
 - (instancetype)initWithDocument:(SINDocument *)document dataDirectory:(NSString *)directory {
     if ((self=[super initWithNibName:nil bundle:nil])) {
-        _appliedNavigationInset=-1; _document=document; _pending=NSMutableDictionary.new; _whenReady=NSMutableArray.new;
+        _appliedNavigationInset=-1; _document=document; _pending=NSMutableDictionary.new; _whenReady=NSMutableArray.new; _whenDocumentReady=NSMutableArray.new;
         _services=[[SINNativeServices alloc] initWithDataDirectory:directory];
         _services.documentID=document.identifier;
     } return self;
@@ -124,17 +128,58 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
     });
 }
 - (void)afterReady:(void (^)(void))block { (void)self.view; if(self.ready)block();else [self.whenReady addObject:[block copy]]; }
+- (void)afterDocumentReady:(void (^)(NSError *))block {
+    [self afterReady:^{if(self.documentLoading)[self.whenDocumentReady addObject:[block copy]];else block(self.documentLoadError);}];
+}
+- (void)finishDocumentLoad:(NSUInteger)revision html:(id)html raw:(NSString *)raw error:(NSError *)error {
+    if(revision!=self.documentLoadRevision)return;
+    self.documentLoadError=error?:([html isKindOfClass:NSString.class]?nil:EditorError(@"The editor returned no loaded HTML."));
+    if(!self.documentLoadError){self.baselineHTML=html;self.loadedRaw=raw;}
+    [self applyPreferences];
+    [self evaluate:[NSString stringWithFormat:@"window.editor.restoreView(%@);void 0",SINJSON(@{@"selectionStart":@(self.document.selection.location),@"selectionLength":@(self.document.selection.length),@"scroll":@(self.document.scroll)})] completion:nil];
+    self.documentLoading=NO;
+    NSArray *blocks=self.whenDocumentReady.copy;[self.whenDocumentReady removeAllObjects];
+    for(void(^block)(NSError *) in blocks)block(self.documentLoadError);
+}
 - (void)reload {
     [self syncServices];
-    [self afterReady:^{NSString *raw=self.document.text;[self asyncScript:[NSString stringWithFormat:@"await window.editor.load(%@,'sin-asset://document/');return window.editor.html(true);",SINJSON(raw)] completion:^(id result,NSError *error){
-        if([result isKindOfClass:NSString.class]){self.baselineHTML=result;self.loadedRaw=raw;}
-        if(error)NSLog(@"Editor load: %@",error.localizedDescription); [self applyPreferences];
-        [self evaluate:[NSString stringWithFormat:@"window.editor.restoreView(%@);void 0",SINJSON(@{@"selectionStart":@(self.document.selection.location),@"selectionLength":@(self.document.selection.length),@"scroll":@(self.document.scroll)})] completion:nil];
+    NSUInteger revision=++self.documentLoadRevision;self.documentLoading=YES;self.documentLoadError=nil;
+    [self afterReady:^{if(revision!=self.documentLoadRevision)return;NSString *raw=self.document.text;[self asyncScript:[NSString stringWithFormat:@"await window.editor.load(%@,'sin-asset://document/');return window.editor.html(true);",SINJSON(raw)] completion:^(id result,NSError *error){
+        if(revision!=self.documentLoadRevision)return;
+        if(error)NSLog(@"Editor load: %@",error.localizedDescription);
+        [self finishDocumentLoad:revision html:result raw:raw error:error];
     }];}];
 }
 - (void)flush:(void (^)(void))completion {
     if(self.showingSource) { self.document.text=self.sourceView.string;self.document.selection=self.sourceView.selectedRange;self.document.scroll=self.sourceScroll.contentView.bounds.origin.y; completion(); return; }
-    [self afterReady:^{[self evaluate:@"({html:window.editor.html(true),view:window.editor.captureView()})" completion:^(id result,NSError *error){if([result isKindOfClass:NSDictionary.class]){NSString *html=result[@"html"];self.document.text=[html isEqual:self.baselineHTML]?self.loadedRaw:(html?:self.document.text);NSDictionary *view=result[@"view"];self.document.selection=NSMakeRange([view[@"selectionStart"] unsignedIntegerValue],[view[@"selectionLength"] unsignedIntegerValue]);self.document.scroll=[view[@"scroll"] doubleValue];}completion();}];}];
+    [self afterDocumentReady:^(NSError *loadError){if(loadError){NSLog(@"Editor flush retained the existing buffer after a load failure: %@",loadError.localizedDescription);completion();return;}NSUInteger revision=self.documentLoadRevision;[self asyncScript:@"await window.editor.ready();return {html:window.editor.html(true),view:window.editor.captureView()};" completion:^(id result,NSError *error){
+        if(revision!=self.documentLoadRevision){[self flush:completion];return;}
+        if(error)NSLog(@"Editor flush failed; the existing document buffer was retained: %@",error.localizedDescription);
+        else if([result isKindOfClass:NSDictionary.class]&&[result[@"html"] isKindOfClass:NSString.class]){NSString *html=result[@"html"];self.document.text=[html isEqual:self.baselineHTML]&&self.loadedRaw?self.loadedRaw:html;NSDictionary *view=result[@"view"];self.document.selection=NSMakeRange([view[@"selectionStart"] unsignedIntegerValue],[view[@"selectionLength"] unsignedIntegerValue]);self.document.scroll=[view[@"scroll"] doubleValue];}
+        else NSLog(@"Editor flush returned no HTML; the existing document buffer was retained.");
+        completion();
+    }];}];
+}
+- (void)captureView:(void (^)(void))completion {
+    if(self.showingSource){self.document.selection=self.sourceView.selectedRange;self.document.scroll=self.sourceScroll.contentView.bounds.origin.y;completion();return;}
+    if(!self.ready||self.documentLoading||self.documentLoadError){completion();return;}
+    NSUInteger revision=self.documentLoadRevision;
+    [self evaluate:@"window.editor.captureView()" completion:^(id view,NSError *error){
+        if(revision==self.documentLoadRevision&&!self.documentLoading&&[view isKindOfClass:NSDictionary.class]){self.document.selection=NSMakeRange([view[@"selectionStart"] unsignedIntegerValue],[view[@"selectionLength"] unsignedIntegerValue]);self.document.scroll=[view[@"scroll"] doubleValue];}completion();
+    }];
+}
+- (void)acceptProjectMoveHTML:(NSString *)liveHTML savedHTML:(NSString *)savedHTML completion:(void (^)(NSError *))completion {
+    [self syncServices];self.document.text=liveHTML;self.document.savedText=savedHTML;
+    if(self.showingSource){
+        NSRange selection=self.sourceView.selectedRange;NSPoint scroll=self.sourceScroll.contentView.bounds.origin;
+        self.receiving=YES;self.sourceView.string=liveHTML;self.receiving=NO;[self.sourceView.undoManager removeAllActions];
+        selection.location=MIN(selection.location,liveHTML.length);selection.length=MIN(selection.length,liveHTML.length-selection.location);self.sourceView.selectedRange=selection;
+        [self.sourceScroll.contentView scrollToPoint:scroll];[self.sourceScroll reflectScrolledClipView:self.sourceScroll.contentView];
+        self.loadedRaw=liveHTML;self.baselineHTML=nil;completion(nil);return;
+    }
+    [self afterReady:^{[self asyncScript:[NSString stringWithFormat:@"await window.editor.setBase('sin-asset://document/',%@);return window.editor.html(true);",SINJSON(liveHTML)] completion:^(id result,NSError *error){
+        if([result isKindOfClass:NSString.class]){self.baselineHTML=result;self.loadedRaw=liveHTML;}[self applyPreferences];completion(error);
+    }];}];
 }
 - (void)showSource:(BOOL)source completion:(void (^)(void))completion {
     if(source==self.showingSource){if(completion)completion();return;}
@@ -158,16 +203,18 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
     self.webView.pageZoom=self.document.zoom/100.0;
     [self setNavigationWidth:self.navigationWidth];if(self.chromeChanged)self.chromeChanged();
     if(!self.ready)return;
+    [self evaluate:[NSString stringWithFormat:@"window.editor.setSpellcheck(%@);void 0",[p[@"showSpellcheck"] isEqual:@NO]?@"false":@"true"] completion:nil];
     [self evaluate:[NSString stringWithFormat:@"document.documentElement.dataset.theme=%@;document.querySelector('#toolbar').hidden=%@;window.editor.setToolbarWrap(%@);window.editor.setImageStorage(%@);window.editor.setReadOnly(%@)",SINJSON([p[@"theme"] lowercaseString]?:@"system"),[p[@"showToolbar"] isEqual:@NO]?@"true":@"false",[p[@"wrapToolbar"] isEqual:@NO]?@"false":@"true",SINJSON(p[@"imageStorage"]?:@""),self.document.readOnly?@"true":@"false"] completion:nil];
 }
 - (void)textDidChange:(NSNotification *)notification { if(self.receiving)return; self.document.text=self.sourceView.string; [self.sourceScroll.verticalRulerView setNeedsDisplay:YES]; if(self.changed)self.changed(); }
-- (void)textViewDidChangeSelection:(NSNotification *)notification { if(self.changed)self.changed(); }
+- (void)textViewDidChangeSelection:(NSNotification *)notification { self.document.selection=self.sourceView.selectedRange;if(self.selectionChanged)self.selectionChanged(); }
 - (void)focusEditor { if(self.showingSource)[self.view.window makeFirstResponder:self.sourceView];else {[self.view.window makeFirstResponder:self.webView];if(self.ready)[self evaluate:@"window.editor.focus()" completion:nil];} }
 - (void)editCommand:(NSString *)command value:(id)value {
     if(self.document.readOnly&&![@[@"copy",@"selectAll"] containsObject:command])return;
     if(self.showingSource){
         NSDictionary *selectors=@{@"undo":@"undo:",@"redo":@"redo:",@"cut":@"cut:",@"copy":@"copy:",@"paste":@"paste:",@"selectAll":@"selectAll:",@"delete":@"delete:"};
-        if([command isEqual:@"insertText"]||[command isEqual:@"insertHTML"]){[self.sourceView insertText:value?:@"" replacementRange:self.sourceView.selectedRange];return;}
+        if([command isEqual:@"pasteText"]){[self.sourceView insertText:[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString]?:@"" replacementRange:self.sourceView.selectedRange];return;}
+        if([command isEqual:@"insertText"]||[command isEqual:@"insertHTML"]||[command isEqual:@"insertDateHeading"]){[self.sourceView insertText:value?:@"" replacementRange:self.sourceView.selectedRange];return;}
         if(selectors[command]){[NSApp sendAction:NSSelectorFromString(selectors[command]) to:nil from:self];return;}
     }
     [self evaluate:[NSString stringWithFormat:@"window.editor.command(%@,%@);void 0",SINJSON(command),SINJSON(value)] completion:nil];
@@ -200,13 +247,20 @@ static NSError *EditorError(NSString *message) { return [NSError errorWithDomain
     void(^reply)(id,NSError*)=^(id result,NSError *error){if(!identifier)return;[self evaluate:[NSString stringWithFormat:@"window.sinNativeReply(%@)",SINJSON(error?@{@"id":identifier,@"error":error.localizedDescription}:@{@"id":identifier,@"result":result?:NSNull.null})] completion:nil];};
     if([type isEqual:@"ready"]){self.ready=YES;[self reload];NSArray *blocks=self.whenReady.copy;[self.whenReady removeAllObjects];for(void(^block)(void) in blocks)block();if(self.readyHandler)self.readyHandler();return;}
     if([type isEqual:@"startup-error"]){NSLog(@"Editor JavaScript error: %@",body);return;}
-    if([type isEqual:@"change"]){if(!self.document.readOnly && !self.showingSource){NSString *html=body[@"html"]?:@"";self.document.text=[html isEqual:self.baselineHTML]?self.loadedRaw:html;if(self.changed)self.changed();}return;}
-    if([type isEqual:@"command"]){if(body[@"html"]&&!self.document.readOnly)self.document.text=[body[@"html"] isEqual:self.baselineHTML]?self.loadedRaw:body[@"html"];if(self.command)self.command(body[@"command"]);return;}
+    if([type isEqual:@"change"]){if(!self.document.readOnly && !self.showingSource && !self.documentLoading && !self.documentLoadError){NSString *html=body[@"html"]?:@"";self.document.text=[html isEqual:self.baselineHTML]?self.loadedRaw:html;if(self.changed)self.changed();}return;}
+    if([type isEqual:@"command"]){if(body[@"html"]&&!self.document.readOnly&&!self.documentLoading&&!self.documentLoadError)self.document.text=[body[@"html"] isEqual:self.baselineHTML]?self.loadedRaw:body[@"html"];if(self.command)self.command(body[@"command"]);return;}
     if([type isEqual:@"source"]){[self showSource:YES completion:nil];return;}
     if([type isEqual:@"annotation-mode"]){if(self.annotationMode)self.annotationMode([body[@"open"] boolValue]);reply(nil,nil);return;}
     if([type isEqual:@"ribbon-height"]){self.measuredRibbonHeight=MAX(0,[body[@"height"] doubleValue]);if(self.chromeChanged)self.chromeChanged();reply(nil,nil);return;}
     if([type isEqual:@"chrome-overlay"]){self.modalOverlay=[body[@"modal"] boolValue];self.popupRects=[body[@"rects"] isKindOfClass:NSArray.class]?body[@"rects"]:@[];if(self.chromeChanged)self.chromeChanged();reply(nil,nil);return;}
-    if([@[@"image-status",@"painted"] containsObject:type]){reply(nil,nil);return;}
+    if([type isEqual:@"image-status"]){
+        NSString *source=[body[@"source"] isKindOfClass:NSString.class]?body[@"source"]:@"";
+        NSString *status=@"";
+        if([source hasPrefix:@"data:"])status=@"Embedded image";
+        else if(source.length){[self syncServices];status=[self.services localPathForSource:source base:nil error:nil]?:source;}
+        if(self.imageStatus)self.imageStatus(status);reply(nil,nil);return;
+    }
+    if([type isEqual:@"painted"]){reply(nil,nil);return;}
     [self syncServices];
     // File-changing requests are mediated by the document shell before native services.
     if(self.nativeMessage) self.nativeMessage(body,reply);

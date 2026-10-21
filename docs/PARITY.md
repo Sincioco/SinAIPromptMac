@@ -1,7 +1,8 @@
 # Sin AI Prompt: Windows to macOS parity audit
 
 Reference: `sincioco/sinaiprompt`, revision
-`a137beaec59d4e6ac7141d63c572742d1b1d0e48`. Feature inventory comes from
+`f6a3bc8da83e761bed6882d32d92bfe173cd47cf` (October 17, 2026), including the
+17 commits after the original `a137bea` baseline. Feature inventory comes from
 the reference README, native source, browser modules, and self-tests. This audit
 distinguishes code reuse and implementation from demonstrated behavior. The
 Windows application's own passing tests are not evidence that the Mac host passes.
@@ -14,7 +15,11 @@ Evidence labels identify passing checks on this Mac: **Model** is
 `Tests/StoreTests.m`; **Services** is `Tests/native-services-tests.m`;
 **Scanner** is `Tests/UnusedImageTests.m`; **App integration** is the real
 AppKit/WKWebView run in `Resources/Web/mac-self-test.js` and
-`Sources/SINNativeSelfTest.m` and `Sources/SINContextMenuSelfTest.m`. **UI smoke** identifies an interaction observed in
+`Sources/SINNativeSelfTest.m`, `Sources/SINContextMenuSelfTest.m`,
+`Sources/SINDocumentWorkflowSelfTest.m` and `Sources/SINProjectSelfTest.m`.
+**Recovery**, **Projects** and **Slices** identify the corresponding standalone
+`Tests/RecoveryTests.m`, `Tests/ProjectTests.m` and `Tests/SliceExportTests.m` suites.
+**UI smoke** identifies an interaction observed in
 the running Mac app. **Code inspection** identifies implemented behavior without
 a dedicated passing assertion. **Manual** identifies remaining acceptance checks.
 A passing check covers its stated case, not every interaction in a row.
@@ -62,7 +67,7 @@ A passing check covers its stated case, not every interaction in a row.
 | --data-dir selects existing profile | Native app launch argument handling | Code inspection. Manual: launch with an existing portable profile |
 | Browser cache separated from persistent profile | WKWebsiteDataStore.nonPersistentDataStore | Code inspection of explicit nonpersistent WebKit configuration |
 | Native titlebar, tabs, resizable document list, ordering/pinning/recent files | AppKit window, native navigator, profile recent list; filename labels follow the available row width | App integration for lazy document switching, buffer isolation and label resizing. UI smoke for a timestamped filename displayed in full at the existing sidebar width. Manual: drag order and recent-file UI |
-| Document and tab right-click commands | Shared native menu in Windows order: Rename, Duplicate, Pin/Unpin, Lock/Unlock, Delete, Copy Full Path, Copy for AI Use, Open Containing Folder, Revert, Close | Context-menu integration checks cover labels/order, draft/saved/missing/locked/pinned states, inactive-document targeting, duplication, lock/AI copy, confirmed/cancelled Revert and Close. UI smoke for all ten commands on both an inactive document row and inactive tab |
+| Document and tab right-click commands | Shared native commands with Emoji, Private, Combine, project destinations and selection-aware deletion alongside Rename, Duplicate, Pin/Lock, path/AI copy, folder, Revert and Close | Context-menu integration checks cover labels/order, draft/saved/missing/locked/pinned states, inactive-document targeting, duplication, lock/AI copy, confirmed/cancelled Revert and Close. Manual: system emoji picker and project-folder chooser |
 | Prompt Explorer supported file filter, icons, folders, lazy children, filesystem refresh | NSOutlineView/NSWorkspace and native filesystem enumeration | Code inspection. Manual: filters, links and refresh UI |
 | Image/text/Markdown/PDF previews outside document collection | Native preview host; PDFKit replaces Windows WebView2 PDF viewer | App integration for preview collection isolation and retained active HTML. Manual: each preview format and return UI |
 | Unused-image colors and safe image-folder deletion based on current HTML | Native explorer reference scan and file action checks | Scanner for unsaved/cross-document references, CSS/srcset/base URLs, entity/percent paths, matching folders, case identity and fail-closed errors. Manual: explorer colors and Trash interaction |
@@ -72,20 +77,55 @@ A passing check covers its stated case, not every interaction in a row.
 | Date/time choices and separators | NSDateFormatter/native menu commands | Code inspection. Manual: complete format-menu parity |
 | Offline build and application bundle | Installed Apple clang/SDK, shell build script, bundled app resources | Built and ran on this Mac without package downloads |
 
+## October synchronization
+
+These additions close the feature gaps identified against the newer Windows
+revision. Native Mac menus and system pickers follow macOS conventions; the
+editor and annotation controls reuse the corresponding upstream modules.
+
+| Updated Windows behavior | Mac implementation / equivalent | Evidence |
+| --- | --- | --- |
+| Two pinned AI reference documents and Help commands for fresh copies | Bundled offline HTML; missing-file recovery and numbered fresh copies preserve existing files and pending edits | App integration |
+| Document emoji, removal and twenty recent choices | Native Emoji & Symbols picker and JSON metadata shown in tabs, Documents and Explorer | App integration for metadata and closed-file combine labels. Manual: system picker interaction |
+| Filename filter and ordered multi-file selection | Debounced native search field, separate ordered checkbox selections for Documents and Explorer | App integration for filtering and order. Manual: repeated pointer selection gestures |
+| Combine selected documents, preserve assets and mark processed sources | Detached HTML merge with rebased local references; existing emoji retained, otherwise ❌ | App integration for source order, source preservation, other-window pending text, closed-file emoji and HTML safety |
+| Private documents and Show Private Documents | Per-document metadata hides tabs/list, companion folders and recent-file entries while retaining recovery | App integration. Visibility control is not encryption |
+| Delete selected files and unsaved drafts | One confirmation, native Trash, all open instances removed only after successful deletion | App integration for cancel/confirm, saved files and drafts; existing companion image files are preserved |
+| Physical projects, create/move menu, project suffixes | `Project - Name` folders, transactional batch moves with companion assets and saved/unsaved reference rewriting | Projects and App integration for batches, cross-window pending edits, lazy editors, locks, external changes, conflicts and rollback |
+| Title paragraph supplies first-save filename | Retains creation timestamp, sanitizes title, reserves a nonconflicting HTML filename | App integration for actual title-based save and rename/emoji continuity |
+| Markdown opens as an editable converted HTML document | Numbered copies under the profile's Markdown Imports directory with rebased asset URLs | App integration for repeated imports and unchanged source |
+| Persistent annotation tools and object locks | Upstream toolbar/model, locked-layer menu/inspector, deletion and movement guards | App integration for repeated drawing, lock operations, templates, clipboard and stale-crop prevention |
+| Direct PNG/SVG object copy and document-image copy | Public NSPasteboard image representations plus editable annotation object metadata | Services and App integration |
+| Image rows/columns, cell copy, Save All Slices, separate editable image layers | Canvas cell geometry and native exclusive PNG export with progress/cancel and completed-file retention | Slices and App integration for exact pixels, geometry, locks, copy, progress, cancellation and failure; Manual: destination picker |
+| Paste as Text, full Clear Formatting, styled date insertion | Plain-text native bridge, reversible whole-document clearing and H2 date followed by Normal paragraph | Services and App integration for newlines, literal Markdown/URLs, Undo/Redo, preserved source structures and date style |
+| Spellcheck visibility, heading and list improvements | Persisted spelling preference and upstream formatting/list modules | App integration |
+| Background recovery and idle editor synchronization | Serial coalescing JSON writer, atomic publication, 600 ms edit-idle synchronization and lightweight view-state capture | Recovery for ordering, retry, direct-write invalidation, large snapshots, backups and partial failures; App integration for editor state |
+| Contents pane alongside navigation, nested image folders and unused-image colors | Separate native outline, HTML companion-folder children and semantic reference scanner | App integration for simultaneous pane layout; Scanner for reference safety. Manual: large-folder responsiveness |
+| Image path status, LF/CRLF/CR, default HTML app selection | Native status callback, explicit line-ending menu and Settings action using Apple's default-application API | Code inspection; existing model encoding checks. Manual: default-association change and system authorization |
+
 Run all local checks with the installed compiler and Apple frameworks:
 
 ```sh
 ./test.sh
 ```
 
-The latest validation passed 107 persistence assertions, 133 native service checks,
-62 unused-image scanner checks, and syntax parsing of 51 JavaScript modules.
-The integrated app run passed 199 checks (129 browser/editor checks and 70 native
-shell checks); its result is recorded in `Tests/last-web-results.json` with a
+The October synchronization passed 107 persistence assertions, 58 background
+recovery assertions, 71 physical-project assertions, 139 native service checks,
+25 slice-export assertions, 62 unused-image scanner checks, and syntax parsing of
+59 JavaScript modules. The signing regression also passed.
+The integrated app run passed 347 checks (226 browser/editor checks and 121 native
+shell, document-workflow and project checks); its result is recorded in
+`Tests/last-web-results.json` with a
 snapshot at `build/self-test.png`. Counts include fixture and request assertions;
 they are not counts of distinct features. **Manual** cases above remain outside
 the demonstrated automated coverage. Live capture and online playback are not
 invoked by these tests.
+
+An additional temporary HFSX volume run passed 85 project assertions, exercising
+real cross-volume publication and case-sensitive asset-name mappings. The volume
+was detached and removed afterward. Initial editor flush and overlapping reload
+regressions verify that native load completion publishes the baseline before
+reading HTML, preserving untouched bytes and independent pending edits.
 
 Automatic legacy-encoding detection uses UTF BOMs, then UTF-8, then Windows-1252;
 BOM-less Mac Roman cannot be unambiguously detected from bytes alone.

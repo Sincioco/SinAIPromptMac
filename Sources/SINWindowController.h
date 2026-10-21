@@ -10,6 +10,8 @@
 @property(nonatomic,strong) SINDocument *active;
 @property(nonatomic,readonly) SINEditor *editor;
 @property(nonatomic,strong) SINNavigator *navigator;
+@property(nonatomic,strong) SINNavigator *contentsNavigator;
+@property(nonatomic,copy) NSString *imageStatus;
 @property(nonatomic,strong) NSSplitView *split;
 @property(nonatomic,strong) NSView *editorHost;
 @property(nonatomic,strong) NSView *documentPane;
@@ -33,6 +35,8 @@
 - (void)refresh;
 - (void)layoutChrome;
 - (void)persist;
+- (void)persistInBackground;
+- (SINEditor *)editorFor:(SINDocument *)document;
 @end
 
 @interface SINWindowController (ExplorerActions)
@@ -48,10 +52,23 @@
 - (void)copyDocumentForAI:(SINDocument *)document;
 - (void)revertDocument:(SINDocument *)document;
 - (BOOL)reloadDocumentFromDisk:(SINDocument *)document;
+- (void)removeOpenDocument:(SINDocument *)document;
 - (void)exportDocument:(BOOL)markdown;
 // Called after a Save panel has confirmed the destination (including Replace).
 - (void)exportDocument:(BOOL)markdown toPath:(NSString *)path completion:(void (^)(NSError *))completion;
 - (void)checkExternalChange;
+@end
+@interface SINWindowController (DocumentWorkflows)
+- (NSArray<SINDocument *> *)visibleDocuments;
+- (void)sortDocuments;
+- (void)refreshPrivacy;
+- (void)chooseEmoji:(SINDocument *)document;
+- (void)combineItems:(NSArray *)items;
+- (void)deleteItems:(NSArray *)items;
+- (void)addBundledDocument:(NSString *)name;
+- (void)ensureBundledDocuments;
+- (void)importMarkdown:(NSString *)path completion:(void (^)(SINDocument *,NSError *))completion;
+- (void)resolveFirstSave:(SINDocument *)document completion:(void (^)(NSString *,NSString *))completion;
 @end
 @interface SINWindowController (NavigationActions)
 - (void)navigateAction:(NSString *)action item:(id)item;
@@ -59,6 +76,7 @@
 @end
 @interface SINWindowController (ContextMenus)
 - (NSMenu *)documentContextMenu:(SINDocument *)document;
+- (NSMenu *)documentContextMenu:(SINDocument *)document documentList:(BOOL)documentList;
 @end
 @interface SINWindowController (Settings)
 - (void)showSettings;
@@ -68,6 +86,9 @@
 @end
 @interface SINWindowController (NativeSelfTest)
 - (void)runNativeShellChecks:(void (^)(NSArray<NSString *> *, NSError *))completion;
+@end
+@interface SINWindowController (DocumentWorkflowSelfTest)
+- (void)runDocumentWorkflowChecks:(void (^)(NSArray<NSString *> *, NSError *))completion;
 @end
 
 @interface SINWindowController (Lifecycle)

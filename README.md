@@ -3,6 +3,8 @@
 Objective-C macOS port of [Sincioco/SinAIPrompt](https://github.com/Sincioco/SinAIPrompt).
 The native shell uses AppKit and WKWebView; the rich-text editor and layered image
 annotation reuse the original application's plain HTML, CSS and JavaScript.
+Synchronized with Windows revision `f6a3bc8` (October 17, 2026); see the
+[feature and verification inventory](docs/PARITY.md).
 
 **No Swift, npm, third-party libraries, downloaded tools, database, AI service,
 package restoration or network build step.** Build with the Apple developer tools
@@ -51,12 +53,35 @@ For an independent portable profile:
 - Code blocks retain the original language lexers, full/preview/collapsed modes,
   captions and editable source. Coloring is lexical rather than compiler based.
 - Switch between visual editing and native HTML source with **⇧⌘U**. Source has
-  line numbers, wrapping, native undo, encoding choices and LF/CRLF selection.
+  line numbers, wrapping, native undo, encoding choices and LF/CRLF/CR selection.
 - Find/replace supports HTML source or visual text, match case, whole words,
   regular expressions, wrapping, a result list and Replace All. Regex work runs
   in a disposable worker so an expensive expression cannot lock the editor.
 - Markdown paste/conversion and export, standalone HTML export, read-only locks,
   document contents navigation, date/time formats and separators.
+- **Paste as Text** uses the destination formatting without interpreting Markdown,
+  links or images. **⌘D** inserts a Heading 2 date and starts a Normal paragraph.
+  **View → Show Spellcheck Underlines** remembers your preference.
+- Document emoji labels use macOS Emoji & Symbols and retain twenty recent choices.
+  **Private** and **Show Private Documents** control navigation visibility while
+  keeping recovery; private documents are not encrypted.
+- **Multi File Selection** adds ordered checkboxes to Documents and Explorer.
+  Combine selected prompts, delete selected files/drafts, or move saved prompts
+  into physical **Project - Name** folders. Project moves include image folders,
+  rewrite local references and preserve unsaved text.
+- A new document's **Title** paragraph supplies its first-save name:
+  `yyyy-MM-dd HHmm - Document Title.html`. The original draft timestamp is retained.
+  Opening Markdown creates a numbered `Name - Converted.html` copy in the profile's
+  **Markdown Imports** folder, leaving the source folder unchanged.
+- The pinned **AI Instructions** and **AI Chat Formatting** reference documents
+  are bundled locally. Their Help commands create fresh copies without overwriting
+  existing files or recovered edits.
+- Annotation tools stay active for repeated drawing. Objects can be locked, copied
+  directly as PNG/SVG, or divided into adjustable rows and columns. Copy one cell,
+  **Save All Slices**, or **Create Separate Images** as independent editable layers.
+  Slice export has progress and cancellation; completed PNGs remain after stopping.
+- Content View can remain visible beside document/file navigation. Explorer nests
+  companion image folders beneath HTML files; filenames can be filtered in place.
 - HTML head content and original scripts are preserved when saving. Document
   scripts stay blocked in the editor; trusted editing code is separate.
 
@@ -65,13 +90,16 @@ their creation time in the Mac's local time zone. Save and auto-save add `.html`
 Recovery retains the original draft name, including older `Prompt N` names and
 names you choose yourself.
 
-Right-click a document in **Documents** or on its tab for the same commands:
+Right-click a document in **Documents** or on its tab for Emoji, Private,
 Rename, Duplicate, Pin/Unpin, Lock/Unlock, Delete, Copy Full Path,
 Copy for AI Use, Open Containing Folder, Revert to Last Saved, and Close.
+Project destinations are available for saved documents. Checked documents also
+offer Combine; the document list applies project moves and deletion to its checked
+selection.
 Commands apply to the document you clicked. Copy for AI Use saves and locks that
 document, then copies the instruction referring to its path. Revert asks before
-discarding changes, and Delete moves files to Trash. File-dependent commands are
-disabled for unsaved drafts.
+discarding changes, and Delete moves files to Trash. Deleting an unsaved draft
+asks before closing it; file-dependent commands stay disabled until it is saved.
 Document names use the available sidebar width as you resize it.
 
 ## Images and capture
@@ -146,11 +174,10 @@ folder for autosaving new documents, startup restoration and save-on-close.
 ```
 
 This builds the app, verifies that a changed signed bundle retains its designated
-requirement, runs native persistence, service and unused-image scanner
-checks, parses the JavaScript with Apple's installed JavaScriptCore, then runs
+requirement, runs native persistence, recovery, project, service, slice-export and
+unused-image scanner checks, parses JavaScript with Apple's installed JavaScriptCore, then runs
 editor and native shell checks in the real WKWebView using an isolated temporary
-profile. The latest integrated run passed 199 checks; the
-[parity audit](docs/PARITY.md) records each suite's evidence and remaining manual
+profile. The [parity audit](docs/PARITY.md) records each suite's results and remaining manual
 cases. Clipboard tests restore the prior pasteboard. No screen-recording
 permission is requested by automated tests. Generated results and screenshots
 stay in ignored directories.
