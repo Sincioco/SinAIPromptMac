@@ -95,7 +95,7 @@ editor and annotation controls reuse the corresponding upstream modules.
 | Title paragraph supplies first-save filename | Retains creation timestamp, sanitizes title, reserves a nonconflicting HTML filename | App integration for actual title-based save and rename/emoji continuity |
 | Markdown opens as an editable converted HTML document | Numbered copies under the profile's Markdown Imports directory with rebased asset URLs | App integration for repeated imports and unchanged source |
 | Persistent annotation tools and object locks | Upstream toolbar/model, locked-layer menu/inspector, deletion and movement guards | App integration for repeated drawing, lock operations, templates, clipboard and stale-crop prevention |
-| Direct PNG/SVG object copy and document-image copy | Public NSPasteboard image representations plus editable annotation object metadata | Services and App integration |
+| Direct PNG/SVG object copy and document-image copy | Public NSPasteboard image representations plus editable annotation object metadata; click, right-click or Control-click a document image and choose Copy Image | Services and App integration for image-menu targeting, read-only copying, original dimensions and exact pixels; text context menus remain native |
 | Image rows/columns, cell copy, Save All Slices, separate editable image layers | Canvas cell geometry and native exclusive PNG export with progress/cancel and completed-file retention | Slices and App integration for exact pixels, geometry, locks, copy, progress, cancellation and failure; Manual: destination picker |
 | Paste as Text, full Clear Formatting, styled date insertion | Plain-text native bridge, reversible whole-document clearing and H2 date followed by Normal paragraph | Services and App integration for newlines, literal Markdown/URLs, Undo/Redo, preserved source structures and date style |
 | Spellcheck visibility, heading and list improvements | Persisted spelling preference and upstream formatting/list modules | App integration |
@@ -109,11 +109,11 @@ Run all local checks with the installed compiler and Apple frameworks:
 ./test.sh
 ```
 
-The October synchronization passed 107 persistence assertions, 58 background
+The October synchronization and image-menu update passed 107 persistence assertions, 58 background
 recovery assertions, 71 physical-project assertions, 139 native service checks,
 25 slice-export assertions, 62 unused-image scanner checks, and syntax parsing of
 59 JavaScript modules. The signing regression also passed.
-The integrated app run passed 347 checks (226 browser/editor checks and 121 native
+The integrated app run passed 356 checks (235 browser/editor checks and 121 native
 shell, document-workflow and project checks); its result is recorded in
 `Tests/last-web-results.json` with a
 snapshot at `build/self-test.png`. Counts include fixture and request assertions;

@@ -115,6 +115,12 @@ async function load(raw,newBase=base){
     videos.attach(doc);
     doc.addEventListener('selectionchange',()=>{saveSelection();syncFormatting();});doc.addEventListener('input',changed);
     doc.addEventListener('click',event=>{if(event.target.closest('a'))event.preventDefault();const image=event.target.closest('img');selectImage(image);imageActions.open(image,event);});
+    // macOS right-click and Control-click should expose the same image actions.
+    doc.addEventListener('contextmenu',event=>{
+      const image=event.target.closest('img');
+      if(!image){imageActions.close();return;}
+      event.preventDefault();selectImage(image);imageActions.open(image,event);
+    });
     doc.addEventListener('dblclick',event=>{const image=event.target.closest('img'),code=event.target.closest('pre[data-sin-code]')||event.target.closest('details[data-sin-code-display]')?.querySelector('pre[data-sin-code]');if(image){selectImage(image);openAnnotation(image).catch(report);}else if(code)pasteCode(code).catch(report);});
     doc.addEventListener('pointerover',event=>imageStatus(event.target.closest('img')?.getAttribute('src')||images.selected?.getAttribute('src')||''));
     doc.addEventListener('pointerout',event=>{if(event.target.closest('img'))imageStatus(images.selected?.getAttribute('src')||'');});

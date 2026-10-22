@@ -136,6 +136,29 @@ export async function runParityTests(check){
   await request('editor-copy',{html:'<p>Reset</p>',text:'Reset'});doc().images[0].click();document.querySelector('[data-image-action=copy]').click();
   const imagePaste=await until(async()=>{const data=await request('editor-paste');return data?.image?data:null;},'Copy Image native PNG');
   check((await pixels(imagePaste.image)).width===40,'Copy Image writes an actual PNG to the native pasteboard');
+  const otherCanvas=document.createElement('canvas');otherCanvas.width=13;otherCanvas.height=7;
+  const otherContext=otherCanvas.getContext('2d');otherContext.fillStyle='#00ffff';otherContext.fillRect(0,0,13,7);
+  await window.editor.load(`<p>Text context menu</p><img src="${png}"><img src="${otherCanvas.toDataURL('image/png')}" style="width:6px">`);
+  await Promise.all([...doc().images].map(image=>image.decode()));
+  const beforeImageCopy=window.editor.html(),imageMenu=document.querySelector('.image-actions');
+  for(const [name,options,readOnly] of [
+    ['Right-click',{button:2},false],['Control-click',{button:0,ctrlKey:true},false],['Read-only right-click',{button:2},true]
+  ]){
+    window.editor.setReadOnly(readOnly);doc().images[0].click();
+    const target=doc().images[1],bounds=target.getBoundingClientRect();
+    const event=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:bounds.left+2,clientY:bounds.top+2,...options});
+    target.dispatchEvent(event);
+    check(event.defaultPrevented&&imageMenu.matches(':popover-open')&&!imageMenu.querySelector('[data-image-action=copy]').disabled&&target.hasAttribute('data-sin-selected')&&!doc().images[0].hasAttribute('data-sin-selected'),name+' opens Copy Image for the clicked image instead of the previous selection');
+    if(readOnly)check(['edit','resize','rename','delete'].every(action=>imageMenu.querySelector(`[data-image-action=${action}]`).disabled),'Read-only image menus allow copying while disabling edits');
+    await request('editor-copy',{html:'<p>Reset</p>',text:'Reset'});imageMenu.querySelector('[data-image-action=copy]').click();
+    const copiedImage=await until(async()=>{const data=await request('editor-paste');return data?.image?data.image:null;},name+' image copy');
+    const copiedPixels=await pixels(copiedImage);
+    check(copiedPixels.width===13&&copiedPixels.height===7&&exactColor(copiedPixels,[0,255,255,255]),name+' copies the clicked image at its original size and exact colors');
+  }
+  window.editor.setReadOnly(false);doc().images[0].click();
+  const textContext=new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2});doc().querySelector('p').dispatchEvent(textContext);
+  check(!textContext.defaultPrevented&&!imageMenu.matches(':popover-open'),'Text right-click retains its standard menu and dismisses stale image actions');
+  check(window.editor.html()===beforeImageCopy,'Image context menus and clipboard copying leave document contents unchanged');
   await runCellTests(check,png,palette);
   await runAnnotationTests(check,png);
   delete window.__combineExecuted;delete window.__clearExecuted;
